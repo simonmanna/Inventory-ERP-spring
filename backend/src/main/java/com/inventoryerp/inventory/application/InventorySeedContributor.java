@@ -76,6 +76,49 @@ public class InventorySeedContributor implements SeedContributor, ConstructionDe
                             + " \"referenceType\", \"referenceId\", notes) VALUES (?, ?, 'STK/OPENING', ?, ?,"
                             + " 'opening_balance', 0, 100, 100, 6, 600, 'opening_balance', 'seed', 'Opening balance from seed')")
                     .params(UUID.randomUUID().toString(), organizationId, widget, warehouse).update();
+            postOpeningJournal(organizationId, new java.math.BigDecimal("600"));
         }
+    }
+
+    /**
+     * IPR D-1: the opening stock written above is journaled with it (Dr Stock Valuation / Cr Retained Earnings), in
+     * the same seed step. It used to be journaled only by {@code PosSeedContributor} (order 400), which
+     * {@code SeedRunner.base()} never runs (it stops at order 300), so an organisation seeded through {@code base()}
+     * (GQDEMO) got the ledger row without a journal: a 600 stock-account variance. Only rows written now are journaled;
+     * an existing organisation is never repaired here (no auto-repair, IPR R1).
+     */
+    private void postOpeningJournal(String org, java.math.BigDecimal value) {
+        String postingKey = "seed_opening_inventory:" + org + ":inventory";
+        if (one("SELECT id FROM \"JournalEntry\" WHERE \"organizationId\" = ? AND \"postingKey\" = ? LIMIT 1", org,
+                postingKey) != null) {
+            return;
+        }
+        String stockAccount = one("SELECT \"accountId\" FROM \"AccountMapping\" WHERE \"organizationId\" = ? AND key ="
+                + " 'stock_valuation' LIMIT 1", org);
+        String equityAccount = one("SELECT \"accountId\" FROM \"AccountMapping\" WHERE \"organizationId\" = ? AND key ="
+                + " 'retained_earnings' LIMIT 1", org);
+        String journal = one("SELECT id FROM \"Journal\" WHERE \"organizationId\" = ? AND code = 'INV' LIMIT 1", org);
+        if (journal == null) {
+            journal = one("SELECT id FROM \"Journal\" WHERE \"organizationId\" = ? AND code = 'GEN' LIMIT 1", org);
+        }
+        if (stockAccount == null || equityAccount == null || journal == null) {
+            throw new IllegalStateException("Opening stock seeded for organisation " + org + " but its journal cannot"
+                    + " be posted: map stock_valuation and retained_earnings and create the INV journal first");
+        }
+        String entry = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"JournalEntry\" (id, \"organizationId\", \"journalId\", \"entryNumber\", \"postingDate\","
+                + " status, \"postedAt\", description, \"sourceType\", \"sourceId\", \"postingKey\", \"updatedAt\") VALUES"
+                + " (?, ?, ?, 'SEED-OPEN-INV-STK', now(), 'posted', now(), 'Opening inventory (seeded widget stock)',"
+                + " 'opening_balance', 'seed', ?, now())").params(entry, org, journal, postingKey).update();
+        jdbc.sql("INSERT INTO \"JournalLine\" (id, \"organizationId\", \"journalEntryId\", \"accountId\", debit,"
+                + " \"baseDebit\", description, \"lineNumber\") VALUES (?, ?, ?, ?, ?, ?, 'Opening inventory', 1)")
+                .params(UUID.randomUUID().toString(), org, entry, stockAccount, value, value).update();
+        jdbc.sql("INSERT INTO \"JournalLine\" (id, \"organizationId\", \"journalEntryId\", \"accountId\", credit,"
+                + " \"baseCredit\", description, \"lineNumber\") VALUES (?, ?, ?, ?, ?, ?, 'Opening inventory', 2)")
+                .params(UUID.randomUUID().toString(), org, entry, equityAccount, value, value).update();
+    }
+
+    private String one(String sql, Object... params) {
+        return jdbc.sql(sql).params(params).query(String.class).optional().orElse(null);
     }
 }

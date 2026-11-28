@@ -31,7 +31,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/inventory/counts")
 public class InventoryCountController {
 
-    /** {@code StartCountDto}. */
+    /** {@code StartCountDto}; {@code freezeLocation} is an IPR 1b extension (count spec section 6). */
     public record StartCountRequest(
             @NotNull(message = "must be a string") @NotEmpty(message = "should not be empty") String locationId,
             @OneOf({"opening", "closing", "cycle", "spot"}) String countType,
@@ -39,7 +39,8 @@ public class InventoryCountController {
             Boolean blind,
             List<String> scopeCategoryIds,
             List<String> scopeProductIds,
-            Boolean restart) {}
+            Boolean restart,
+            Boolean freezeLocation) {}
 
     /**
      * {@code SaveCountLineDto}; {@code missingSerials} / {@code foundSerials} (serial-tracked lines) are an extension:
@@ -99,7 +100,7 @@ public class InventoryCountController {
     @RequirePermissions(Permissions.INVENTORY_COUNT__COUNT)
     public Map<String, Object> start(@Valid @RequestBody StartCountRequest dto) {
         return counts.startChecked(dto.locationId(), dto.countType(), dto.notes(), dto.blind(), dto.scopeCategoryIds(),
-                dto.scopeProductIds(), dto.restart());
+                dto.scopeProductIds(), dto.restart(), dto.freezeLocation());
     }
 
     @PatchMapping("/{id}/draft")

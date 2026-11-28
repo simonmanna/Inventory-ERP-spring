@@ -157,11 +157,11 @@ public abstract class ApiTestSupport {
      * Test calls get a fresh key automatically unless they pass one, or pass {@link #NO_IDEMPOTENCY_KEY} to send none.
      */
     private static final java.util.regex.Pattern KEY_REQUIRED = java.util.regex.Pattern.compile(
-            "^/(inventory/(direct-stock/(in|out)|counts/[^/]+/submit|transfers/[^/]+/(receive|approve|dispatch)"
+            "^/(inventory/(direct-stock/(in|out)|opening-stock/(import|runs/[^/]+/batches/[^/]+/retry)|counts/[^/]+/submit|transfers/[^/]+/(receive|approve|dispatch)"
                     + "|(waste|adjustments)/[^/]+/approve)|warehouse/pick-orders/[^/]+/ship"
                     + "|procurement/goods-receipts/adhoc|(sales|crm)/quotations/[^/]+/convert"
                     // sales readiness R2: invoice, credit-note, deposit, sales money, cash-sale, delivery, return routes
-                    + "|invoices(/[^/]+/(post|cancel))?|credit-notes(/[^/]+/(post|allocate|reverse))?"
+                    + "|invoices(/[^/]+/(post|cancel|issue-undelivered))?|credit-notes(/[^/]+/(post|allocate|reverse))?"
                     + "|customer-deposits(/[^/]+/(classify|apply|refund|void|applications/[^/]+/reverse))?"
                     + "|payments/[^/]+/allocations|payments/mobile-money"
                     + "|sales/(orders/[^/]+/(confirm|approve|reverse|invoices|deposits|apply-deposits|deliveries"
@@ -545,5 +545,18 @@ public abstract class ApiTestSupport {
         permissionService.evictAll();
         assertThat(failures).isEmpty();
         return checked;
+    }
+
+    /**
+     * IPR S2 (P15-6): a bootstrapped organisation starts with the stock adjustment, stock write-off and inventory
+     * valuation pairs on. A fixture whose one administrator makes and clears documents switches them off.
+     */
+    protected void inventorySodPairsOff(String token) {
+        for (String pair : List.of(com.inventoryerp.kernel.approvals.SegregationOfDutiesService.STOCK_ADJUSTMENT,
+                com.inventoryerp.kernel.approvals.SegregationOfDutiesService.STOCK_WRITE_OFF,
+                com.inventoryerp.kernel.approvals.SegregationOfDutiesService.INVENTORY_VALUATION)) {
+            Res r = call("PUT", "/approval-controls/sod-rules/" + pair, Map.of("isActive", false), token);
+            assertThat(r.status()).as(r.raw().body()).isEqualTo(200);
+        }
     }
 }

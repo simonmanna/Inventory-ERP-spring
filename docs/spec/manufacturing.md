@@ -127,6 +127,75 @@ Behaviour notes:
 
 ## Deviations
 
+IPR wave 3, stream E3 (branch `fix/ipr-w3`, **pending owner sign-off**; evidence
+[w3-engine-closeout](../audits/ipr-evidence/w3-engine-closeout.md)):
+
+- **N-1: one reservation per stock cell at confirm.** Material lines of the same product and variant are summed before
+  reserving (the reservation upsert sets the quantity, so the last line used to win).
+- **SW-4: linked production rows.** Consumption rows carry their material line (`sourceLineId`) and do not consume stock
+  reserved for sales orders; output and partial-output rows carry their line; the reversal's issues of the main
+  output, partial outputs and by-products name the receipt row they undo (`reversesLedgerId`, when the order kept its
+  ledger code or has a single output row of that product).
+- **Partial output (review fixes).** A partial output with a `date` is dated (`date`, `effectiveAt`) and refused past
+  the back-date limit (`Partial output date is more than N days in the past`); its overhead uses the work-centre rated
+  accounts (`absorbOverhead`, net of rated credits already posted), and a reversal reverses every rated entry of the
+  order. Completion checks the remaining pool after subtracting partials, and partials keep every by-product with a
+  cost share out of the main output's share. A reversal of an order without a main output ledger link no longer counts
+  partials twice. `receiveOutput` dates its receipt; Complete keeps the Nest back-date behaviour.
+- **Rework consumes from QC quarantine.** A rework order's consumption out of QC quarantine is part of the quality flow
+  and passes the X-3 hold (it was refused, so a rework order could not start).
+
+IPR Phase 2, stream C (branch `fix/ipr-2`, **pending owner sign-off**; evidence
+[2-accounting-mfg](../audits/ipr-evidence/2-accounting-mfg.md)):
+
+- **GL-2: standard-costed by-products.** A by-product whose product is costed at STANDARD is received (stock and GL)
+  at its standard; the difference to its share of the order's cost goes to the production variance account
+  (`StandardCostService.postStageVariance`, source `production_order`). The order's pool is still reduced by the
+  share. Reversing the order reverses those variance entries too. Nest posted the share to stock while the engine
+  valued the receipt at standard, so GL and stock ledger drifted.
+- **X-9: partial output of a simple order** — new route `POST /manufacturing/production-orders/:id/partial-output`
+  (`production_order:complete`, Idempotency-Key required; body `quantity`, `batchNumber?`, `expiryDate?`, `date?`,
+  `notes?`; answers the order with `partialOutputs`). Each receipt absorbs `overhead × qty / expected` into WIP and
+  credits WIP with `(materials + overhead) × (1 − by-product %) × qty / expected`; rows in
+  `ProductionPartialOutput` (V702). Limits (minimum safe version): only in progress, single-stage, non-QC,
+  non-abnormal-rework orders whose output is not costed at STANDARD (its variances settle once, at completion);
+  the partials must stay below the expected quantity; by-products come at
+  completion. Complete takes the rest of the pool, absorbs the rest of the overhead and needs a quantity > 0 when
+  partials exist; `producedQty` includes the partials. Cancel is refused when partials exist ("Order <code> has
+  partial outputs in stock and cannot be cancelled; complete it, then reverse it if it must be undone."); the
+  reversal takes every partial receipt back.
+- **WIP-3: late cost of cancelled and reversed orders.** The cost adjustment run also takes the open WIP shares of
+  orders in status `cancelled`, and sends them to the materials the cancel or reversal received back (on hand →
+  adjunct, sold → cost of sales; none → cost of sales). They stayed in WIP for ever before. The returned materials
+  are the receipts of `production_order_cancel` / `production_reversal` (single-stage order, by order code) and, since
+  IPR review 2 (R2-4), of `production_stage_reversal` (multi-stage order, by each of its stage postings): before that a
+  reversed multi-stage order had no layers and its share went to cost of sales although its stage reversal had put
+  the materials back on hand. Only a share with no returned materials at all (legacy rows) goes to cost of sales.
+- **WIP-6: `GET /manufacturing/reports/wip-reconciliation`** uses the WIP tie-out basis: base currency, posted
+  entries, a single-stage order in progress carries its materials (overhead only at completion) less its partial
+  outputs, QC hold = 0, multi-stage = Σ stage WIP, plus process costing and open late-cost shares. Same keys, plus
+  `processCostingWip`, `pendingLateCost`, `failingObjects`; `balanced` also needs every cost object to tie.
+  `GET /manufacturing/reports/stage-wip` reads the GL in base currency over posted entries.
+
+IPR residuals, stream H (branch `fix/ipr-12-residuals`, **pending owner sign-off**; evidence
+[12-residuals](../audits/ipr-evidence/12-residuals.md)):
+
+- **D-2: a multi-stage order's reservation follows its stages.** After every stage posting (issue, output, backflush)
+  and every stage-posting reversal of an open order, the order's `production_order` reservation on each cell it
+  reserved (or whose reservation a stage consumed) is set to Σ (planned − consumed) of its materials of that product
+  and variant, in base units; a cell with nothing left is marked `consumed`. A reversal brings the material back
+  into the reservation. Completion and cancel release what is left, as before. Nest kept the planned quantity until
+  completion, so the integrity check `reservations` showed `over_reserved` for every open multi-stage order.
+- **WIP-8: legacy reversal value.** Reversing a completed order whose main output row has no `totalCost` (completions
+  written before the output kept its value) puts back into WIP the value its output receipts carry in the stock
+  ledger (the completion's pool to 6 dp), not `outputUnitCost` (6 dp) × quantity, which left a residual in WIP
+  (pool 1,000,000 over 300,000 units: 0.10). Orders with partial outputs, or without such receipts, keep the old
+  product. Orders with `totalCost` are unchanged.
+- **WIP-7** (report only): the WIP tie-out attributes a process-costing variance entry by its posting key before its
+  `sourceId`, so a process whose code equals a production order's code no longer lands its variance on that order.
+- **D-3** (no contract change): `ProductionService.getProduct` returns every column of the product (it selected only
+  `id` and `uomId`; no caller read another column on this branch, so nothing behaved differently).
+
 Approved by the owner in ADR-S006 (package A, bug fixes; everything else in ADR-S006 is additive):
 
 | # | Route | Nest | Spring |

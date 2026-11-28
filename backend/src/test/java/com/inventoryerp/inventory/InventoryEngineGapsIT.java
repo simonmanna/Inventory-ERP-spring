@@ -451,7 +451,10 @@ class InventoryEngineGapsIT extends ApiTestSupport {
         assertThat(negative.body().get("message").asString())
                 .isEqualTo("Unit cost of \"" + name(p) + "\" cannot be negative; enter 0 or more");
         assertThat(onHand(p, loc)).isEqualByComparingTo("0");
-        stockIn(loc, List.of(line(p, 3, 0)));
+        // IPR C-3 / GL-6 (owner decision D3): an explicit 0 needs a reason.
+        Map<String, Object> free = line(p, 3, 0);
+        free.put("zeroCostReason", "Free sample");
+        stockIn(loc, List.of(free));
         assertThat(onHand(p, loc)).isEqualByComparingTo("3");
     }
 
@@ -589,7 +592,8 @@ class InventoryEngineGapsIT extends ApiTestSupport {
         assertThat(lotInTransit(p, l1)).isEqualByComparingTo("5");
         String t1Id = t1.get("id").asString();
         JsonNode received = ok(200, "POST", "/inventory/transfers/" + t1Id + "/receive", Map.of("lines", List.of(
-                Map.of("itemId", t1.get("items").get(0).get("id").asString(), "received", 3, "damaged", 2))));
+                Map.of("itemId", t1.get("items").get(0).get("id").asString(), "received", 3, "damaged", 2)),
+                "lossReason", "broken seal", "approvedById", adminId));
         assertThat(received.get("status").asString()).isEqualTo("completed");
 
         JsonNode reversed = ok(200, "POST", "/inventory/transfers/" + t1Id + "/reverse", Map.of("reason", "wrong lot"));

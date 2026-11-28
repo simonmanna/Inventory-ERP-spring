@@ -243,7 +243,9 @@ backup role works.
   "Inventory ERP — API" (`docker compose -f docker-compose.yml -f infra/monitoring/docker-compose.monitoring.yml up -d`,
   Grafana on :3002).
 - Metrics: Micrometer HTTP (`http_server_requests_seconds{uri,status}`), JVM, GC, Hikari, process CPU, plus
-  `erp_stock_posting_jobs_pending`, `erp_sync_dead_letters_open`, `erp_sync_push_ops_total{status}`,
+  `erp_stock_posting_jobs_pending` (pending or processing), `erp_stock_posting_jobs_failed`,
+  `erp_inventory_integrity_open{kind}` (open `integrity_*` findings, all organisations, refreshed every minute),
+  `erp_sync_dead_letters_open`, `erp_sync_push_ops_total{status}`,
   `erp_sync_lag_seconds_max` (devices active in the last 7 days), `erp_sync_devices_stale` (not heard from for 24 h),
   `erp_event_publications_incomplete`,
   `erp_backup_health` (0/1/2), `erp_backup_last_full_age_seconds`, `erp_job_failures_total{task}` (a scheduled job failed
@@ -251,7 +253,8 @@ backup role works.
   `erp_provider_failures_total{provider}` (mobile money). These jobs carry on with the next organization, so their
   errors never reach the HTTP metrics.
 - Alerts (`alerts.yml`): API down, 5xx > 2 %, checkout p95 > 1.5 s, Hikari pending, heap > 90 %, GC > 10 %,
-  stock-posting backlog, open sync dead letters, stale or lagging sync devices, stuck outbox, failing scheduled job, failing external provider, backup
+  stock-posting backlog, failed stock-posting jobs, open inventory integrity findings (value kinds critical), open
+  sync dead letters, stale or lagging sync devices, stuck outbox, failing scheduled job, failing external provider, backup
   critical / older than 36 h.
 - `/api/v1/health/ready`: `critical.database` (503 when down) and `advisory.backup` (`degraded`, never 503).
 - Logs: JSON to stdout under `prod`; ship with Loki/Promtail or the Docker logging driver. Search by `requestId`.
@@ -340,7 +343,7 @@ WAL archiving and PITR are infrastructure tasks for the hosting environment. The
 | Back office shows "Offline: data as of …" | The server is unreachable; screens show what this browser saved (per user, 24 h–7 days by kind) and writes are refused with "Needs connection". It clears by itself within ~10 s of the server answering (ADR-S083 O3) |
 | Offline stock work shows "Held for a supervisor" | The server kept the document but refused its posting (e.g. not enough stock at the source, or the user may not post receipts). Find it in Inventory → Offline stock discrepancies, then complete or reverse the document in the back office and resolve the exception in the Posting Monitor (ADR-S083 O4) |
 | A transfer receipt says "Waiting for the dispatch to sync" | The receiving tablet synced before the sending one. It is applied automatically within ~2 minutes of the dispatch reaching the server (`SyncStockJob`); nothing to do unless it stays open |
-| Posting Monitor shows an `integrity_*` exception, or period close refused: "open inventory integrity finding(s) on stock value" | The daily inventory integrity monitor (03:10 UTC, `InventoryIntegrityJob`) found a broken invariant. Open Inventory → `GET /inventory/reports/integrity` to see every row of the check (5,000 max). Nothing was corrected: investigate the rows (the read-only queries in `docs/audits/2026-11-22-inventory-data-checks.sql` help for history), fix through documents or an owner-approved repair, then resolve the exception; the next run re-raises it if the check still fails. Only `integrity_valuation_vs_subledger` / `integrity_valuation_vs_gl` hold the period close |
+| Posting Monitor shows an `integrity_*` exception, or period close refused: "open inventory integrity finding(s) on stock value" | The daily inventory integrity monitor (03:10 UTC, `InventoryIntegrityJob`) found a broken invariant. Open Inventory → `GET /inventory/reports/integrity` to see every row of the check (5,000 max). Nothing was corrected: investigate the rows (the read-only queries in `docs/audits/2026-11-22-inventory-data-checks.sql` help for history), fix through documents or an owner-approved repair, then resolve the exception; the next run re-raises it if the check still fails. Only `integrity_valuation_vs_subledger` / `integrity_valuation_vs_gl` / `integrity_valuation_vs_gl_by_product` hold the period close (`InventoryTieOutMonitor.INTEGRITY_VALUE_KINDS`) |
 | Period close refused: "stock work recorded offline was refused…" | Open stock dead letters for the period. Correct or discard them in Settings → Offline devices → Rejected, then close (ADR-S083 O4) |
 | A field order shows "Price differs — in review" | The server priced the order more than `sync.varianceTolerance.salesOrder` % (default 0.5) away from what the rep's tablet showed — usually a price change or a rule the tablet cannot see. The order is a draft: check it in Sales → Offline sales review, confirm or correct it, then resolve the item (ADR-S083 O5) |
 | A field order is "On hold — Offline order cap exceeded" | The rep confirmed more from offline orders within the offline window than `sync.offlineOrderCap` allows. Release the order if it is fine, resolve the review item; raise the cap in Settings if reps legitimately sell more offline |
@@ -374,8 +377,9 @@ the failure count and up to `rowLimit` (5,000) failing rows. Checks:
 | `offline_queue` | offline stock work waiting too long or held | see the offline section below |
 
 The daily monitor (03:10 UTC, `InventoryIntegrityJob`) raises one Posting Monitor exception `integrity_<key>` per
-failing check with the count and first rows. Only `integrity_valuation_vs_subledger` and `integrity_valuation_vs_gl`
-hold the period close. Resolve the exception after the fix; the next run raises it again if the check still fails.
+failing check with the count and first rows. Only `integrity_valuation_vs_subledger`, `integrity_valuation_vs_gl`
+and `integrity_valuation_vs_gl_by_product` hold the period close (`InventoryTieOutMonitor.INTEGRITY_VALUE_KINDS`).
+Resolve the exception after the fix; the next run raises it again if the check still fails.
 
 **Held postings (`offline_held_posting`).** A transfer dispatch, adjustment or receipt recorded on a device that the
 server kept but could not post (for example not enough stock at the source, or the user may not post it). Inventory →
@@ -392,3 +396,67 @@ sending device and sync it). `offline_cap`: an offline sales order over the cap;
 **Data checks for history.** `docs/audits/2026-11-22-inventory-data-checks.sql` holds read-only queries that look for
 damage written before the hardening (see the comment above each query). They contain no `UPDATE` / `DELETE`, but running them on a live database still needs the owner's approval
 each time (load, and the results are business data). Any repair they suggest needs its own owner-approved plan.
+
+### 8b. IPR rehearsals (R7)
+
+Recovery and migration safety for the Inventory Production Readiness program. Scripted in Phase 0, rehearsed in
+Phase 5 (gate G5) on a **restored copy** of the latest live backup, never on live. Details and the Phase 5 order:
+`scripts/ipr/README.md`.
+
+| Rehearsal | Tool | Passes when |
+|---|---|---|
+| Backup restore | `scripts/ipr/restore-copy.sh <dump> <port>` (throwaway `postgres:16`, checksum, row counts), then `scripts/dr-drill.mjs` (§7a) | restore exits 0; table and row counts are plausible against live; the DR drill's trial balances are identical |
+| Data checks on the copy | `scripts/ipr/run-data-checks.sh <port> <sql>` (one `READ ONLY` transaction, results file) | every query runs; the results go to the owner per org |
+| Migration apply and rollback | `scripts/ipr/rehearse-migration.sh <dump>` with `CANDIDATE_JAR` / `PREVIOUS_JAR` | the candidate migrates and starts; the previous jar starts on the new schema (migrations additive); `rollback.sh --restore-db` semantics on the copy bring back the old head and row counts, and the previous jar starts there |
+| Failed stock-posting job | `scripts/ipr/rehearse-failed-job.md` (automated twin: `PosStockPostingRecoveryIT`) | API killed mid-drain, failing line, retry and abandon from the Posting Monitor: one issue row per posted line, no new integrity finding on the products involved. After a crash, draining resumes by itself once the dead process's `stock-posting-drain` ShedLock expires (up to 5 min). A "no recipe" job cannot be fixed by retry (the job keeps its recipe snapshot): abandon it and adjust |
+
+The alerts these rehearsals exercise (`alerts.yml`): `StockPostingJobsFailed` (`erp_stock_posting_jobs_failed` > 0
+for 15 min), `InventoryIntegrityFindingsOpen` (warning) and `InventoryIntegrityValueFindingsOpen` (critical,
+`erp_inventory_integrity_open{kind=~"integrity_valuation_.*"}`), each after 1 h. The monitors' in-app alerts go to
+every user holding the related permission. Integrity and Posting Monitor: `inventory_valuation:read` and
+`pos:reports`. GL tie-out and ledger integrity: `report:accounting`.
+
+### 8c. Inventory go-live checklist (IPR Phase 4, T33, gate G4)
+
+Use this for every organisation that starts keeping stock, and again (the last two rows) before every release. Tick
+each row in the organisation's go-live record with the value chosen and who signed it off. Settings are in Settings →
+Inventory (`/settings`, key in brackets); defaults are those of `SettingRegistry`.
+
+| # | Item | What to decide or check | Where | Sign-off |
+|---|---|---|---|---|
+| 1 | Costing method | AVCO, FIFO, STANDARD or SPECIFIC for new products (`inventory.defaultCostingMethod`, default AVCO) and per product. Changing it once a product has stock is a revaluation event: decide before the opening stock is loaded. STANDARD products need an approved and active standard cost before their first receipt | Settings; Inventory → Costing Policy | finance |
+| 2 | Negative stock | `inventory.allowNegativeStock` (default **on**: sales never block). Off makes stock-outs follow the item stock policy (`block` refuses). Note: with it off, offline sales are still accepted and flagged (P15-1), and open P2 C-4 / X-4 become go-live blockers for the organisation (feature map) | Settings | operations + finance |
+| 3 | Serial and expiry policies | `inventory.serialPolicy` (`capture_optional` default, or `required`), `inventory.expiredStockPolicy` (`allow` default, or `skip_expired`), `inventory.defaultPickingStrategy` (FEFO), and the per-product tracking flags (`inventory.defaultBatchTracking` / `defaultExpiryTracking` / `defaultSerialTracking` for new products). Set tracking flags before the first receipt: a product with stock should not change tracking (open P2 C-8) | Settings; product form | operations |
+| 4 | Separation of duties | New organisations are created with the `stock_adjustment`, `stock_write_off` and `inventory_valuation` pairs **active** (P15-6, `docs/spec/kernel.md` S2). Existing organisations are unchanged: switching them on is an owner decision. With a pair on, the maker cannot clear their own document; make sure every location has at least two people holding the checker permissions | Settings → Approval controls → SoD rules | owner |
+| 5 | Thresholds | `inventory.transitLossApprovalThreshold` (default 0: every transit loss with a value needs a reason, an approver and a PIN), `inventory.stockInApprovalNeeded` / `stockOutApprovalNeeded` (default on), the approval limits and workflows for stock-outs, waste and count submission, and the time limits `inventory.maxFutureEffectiveMinutes` (5) and `inventory.maxBackdateDays` (7) of ADR-S088 | Settings; Approval controls | owner + operations |
+| 6 | Tolerances | `inventory.glTieOut.enabled` (on) and `inventory.glTieOut.tolerance` (default 1, base currency; set the go-live value, 0.01 is the release-gate value), the stock reconciliation tolerance (`GET /inventory/reports/reconciliation?tolerance=`) and the landed-cost re-approval tolerances (`costing.landedCost.reapprovalTolerancePct` / `Amount`) | Settings | finance |
+| 7 | Opening stock | Load it with the **opening-stock import** (IPR R5, §8d: CSV upload, preview with the exact journal, approval bound to the preview token, one atomic batch per location). Only into locations with no ledger history. Never type opening stock as a count (owner decision D5: an `opening` count posts to retained earnings) or as direct stock-in | Opening-stock import (wave 3; screen and route land with it) | finance |
+| 8 | First integrity run | After the opening import: Inventory → Reporting → **Integrity & Reconciliation** (`/inventory/integrity`). Every integrity check passing, GL tie-out within tolerance, the opening-import reconciliation equal (Σ ledger value = journal = valuation delta). Report-only checks are read and explained (`feature_risk` lists the open P2s, row 10) | `/inventory/integrity` | finance |
+| 9 | Alert recipients | The daily monitors alert every active user holding the permission: integrity and Posting Monitor `inventory_valuation:read` and `pos:reports`, GL tie-out and ledger integrity `report:accounting`, approvals the approver roles. Name at least one person per permission in this organisation and confirm one test alert reached them (`alerts.yml` for Prometheus: `InventoryIntegrityFindingsOpen`, `InventoryIntegrityValueFindingsOpen`, `StockPostingJobsFailed`) | Roles and permissions; Grafana | operations |
+| 10 | Feature-usage re-check (**mandatory release step**) | Before go-live **and before every release**: open the feature table on `/inventory/integrity` (or `GET /inventory/reports/feature-usage`) for every organisation. Every P2 listed under "Open P2s on features in use" is a go-live blocker for that organisation (R6, gate G6) until it is fixed or the owner accepts it in writing. The daily job raises `integrity_feature_risk` when an organisation starts using such a feature | `/inventory/integrity`; `docs/spec/inventory-feature-risk-map.md` | integrator + owner |
+| 11 | Day-1 check | On day 1 after go-live: rows 8 and 10 again, and the Posting Monitor empty of `integrity_*` and `gl_tieout_variance` findings, or each one explained | `/inventory/integrity`; `/inventory/posting-monitor` | finance |
+
+Every failing check on the page links to its Posting Monitor findings (`/inventory/posting-monitor?kind=integrity_<check>`).
+The page is read-only; it never corrects data. Fixes go through documents or an owner-approved repair (§8a).
+
+### 8d. Opening-stock import (IPR R5, ADR-S090)
+
+The go-live step that loads opening stock into **empty** locations (no ledger row, no open count). Web: Inventory →
+Configuration → *Opening stock import* (`/inventory/opening-stock`); API: `/api/v1/inventory/opening-stock/*`.
+
+1. Set costing method, lot / expiry / serial flags, variants, cost prices and STANDARD costs first: any change after
+   the preview makes the import 409 "Preview is stale — preview and approve again".
+2. Check the account mapping `retained_earnings` (opening equity) and that today's fiscal period is open.
+3. Download the CSV template (product, variant, location, quantity, unit_cost, lot, expiry, serials; quantities in the
+   base unit; serials separated by `|`), fill it, upload it and **Preview** (`inventory_valuation:manage`). Fix every
+   row error; check the journal (Dr stock / Cr opening equity) and the total.
+4. **Approve and import** (`inventory_valuation:post`). Each batch (at most 2,000 rows of one location) posts on its
+   own. For maker-checker, configure an approval workflow for entity type `opening_stock_import` (the approval is bound
+   to the preview token).
+5. If the run is *partial* or *failed*, open it, read the batch error, fix the cause and **Retry** the batch (a stale
+   batch shows its journal as it would post now; approve it again). The same file cannot be imported twice.
+6. The run's **Reconciliation** must say *Reconciled* (stock ledger = journal = valuation change = previewed value).
+   Then run the integrity report (`GET /inventory/reports/integrity`) and the GL tie-out
+   (`GET /reports/inventory/gl-tieout`): both green before the first sale.
+
+Wrong opening stock is corrected with a count or adjustment; there is no reversal of an import.

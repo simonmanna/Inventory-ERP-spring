@@ -23,6 +23,10 @@ import { describeApiError, notifyApiError } from '@/lib/api-error';
 import { idempotentPost } from '@/lib/idempotent-request';
 import { notify } from '@/lib/notify';
 import { dateTime, formatMoney } from '@/lib/format';
+import { costText } from '@/features/inventory/cost-visibility';
+
+/** IPR S-2: a value the server hides (null) without inventory_valuation:read shows as a dash, never as zero. */
+const costMoney = (v: string | number | null | undefined) => costText(v, true, (x) => formatMoney(Number(x)));
 import { useAuthStore } from '@/stores/auth.store';
 import {
   type StockLevel, fetchAllStockLevels, fmtQty, apiErrorMessage as errMsg,
@@ -234,7 +238,7 @@ export function WastePage() {
       }
     },
     onSuccess: (r) => {
-      if (r.posted) notify.success(tx('{{wasteCode}} posted — stock written off ({{v2}})', { wasteCode: r.doc.wasteCode, v2: formatMoney(Number(r.doc.totalValue)) }));
+      if (r.posted) notify.success(tx('{{wasteCode}} posted — stock written off ({{v2}})', { wasteCode: r.doc.wasteCode, v2: costMoney((r.doc.totalValue)) }));
       else if ('postError' in r && r.postError) notify.error(tx('{{wasteCode}} saved as pending: {{postError}}', { wasteCode: r.doc.wasteCode, postError: r.postError }));
       else notify.success(tx('{{wasteCode}} saved as pending', { wasteCode: r.doc.wasteCode }));
       setShowForm(false);
@@ -398,7 +402,7 @@ export function WastePage() {
                         {r.items.length === 1 ? `${r.items[0].productName} × ${fmtQty(Number(r.items[0].qty))}` : `${r.items.length} items`}
                       </td>
                       <td className="px-3 py-2 text-right font-mono tabular-nums">
-                        {formatMoney(Number(r.totalValue))}
+                        {costMoney((r.totalValue))}
                         {isPending(r.status) && <span className="ml-1 text-[10px] text-muted-foreground">{tx('est.')}</span>}
                       </td>
                       <td className="px-3 py-2">
@@ -631,7 +635,7 @@ export function WastePage() {
                                 checked={ln.isExpiry} onChange={(e) => updateLine(ln.key, { isExpiry: e.target.checked })} />
                             </td>
                             <td className="px-2 py-2.5 text-right font-mono tabular-nums">
-                              {level && qty > 0 ? formatMoney(qty * level.averageCost) : '—'}
+                              {level && qty > 0 && level.averageCost != null ? formatMoney(qty * level.averageCost) : '—'}
                             </td>
                             <td className="px-2 py-1.5">
                               <Button size="icon" variant="ghost" className="h-7 w-7"
@@ -697,7 +701,7 @@ export function WastePage() {
                   <div><span className="text-muted-foreground">{tx('Registered:')} </span>{dateTime(d.createdAt)}</div>
                   <div><span className="text-muted-foreground">{tx('Status:')} </span>{STATUS_LABELS[d.status] ?? d.status}</div>
                   {d.postedAt && <div><span className="text-muted-foreground">{tx('Posted:')} </span>{dateTime(d.postedAt)}</div>}
-                  <div><span className="text-muted-foreground">{isPending(d.status) ? tx('Estimated value: ') : tx('Value: ')}</span><span className="font-semibold">{formatMoney(Number(d.totalValue))}</span></div>
+                  <div><span className="text-muted-foreground">{isPending(d.status) ? tx('Estimated value: ') : tx('Value: ')}</span><span className="font-semibold">{costMoney((d.totalValue))}</span></div>
                   {d.notes && <div className="sm:col-span-2"><span className="text-muted-foreground">{tx('Notes:')} </span>{d.notes}</div>}
                   {d.reversedAt && (
                     <div className="sm:col-span-2"><span className="text-muted-foreground">{tx('Reversed:')} </span>{dateTime(d.reversedAt)}{d.reversalReason ? ` — ${d.reversalReason}` : ''}</div>
@@ -724,8 +728,8 @@ export function WastePage() {
                           </td>
                           <td className="px-2 py-1.5 text-right font-mono tabular-nums">{fmtQty(Number(i.qty))}{i.unit ? ` ${i.unit}` : ''}</td>
                           <td className="px-2 py-1.5 text-muted-foreground">{i.batchNumber ?? '—'}</td>
-                          <td className="px-2 py-1.5 text-right font-mono tabular-nums">{formatMoney(Number(i.unitCost))}</td>
-                          <td className="px-2 py-1.5 text-right font-mono tabular-nums">{formatMoney(Number(i.totalCost))}</td>
+                          <td className="px-2 py-1.5 text-right font-mono tabular-nums">{costMoney((i.unitCost))}</td>
+                          <td className="px-2 py-1.5 text-right font-mono tabular-nums">{costMoney((i.totalCost))}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -748,8 +752,8 @@ export function WastePage() {
                             {je.lines.map((l, idx) => (
                               <tr key={idx} className="border-b last:border-0">
                                 <td className="px-3 py-1">{l.account.code} — {l.account.name}</td>
-                                <td className="w-28 px-3 py-1 text-right font-mono tabular-nums">{Number(l.debit) ? formatMoney(Number(l.debit)) : ''}</td>
-                                <td className="w-28 px-3 py-1 text-right font-mono tabular-nums">{Number(l.credit) ? formatMoney(Number(l.credit)) : ''}</td>
+                                <td className="w-28 px-3 py-1 text-right font-mono tabular-nums">{Number(l.debit) ? costMoney((l.debit)) : ''}</td>
+                                <td className="w-28 px-3 py-1 text-right font-mono tabular-nums">{Number(l.credit) ? costMoney((l.credit)) : ''}</td>
                               </tr>
                             ))}
                           </tbody>

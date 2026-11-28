@@ -336,6 +336,22 @@ export const ACCOUNT_MAPPING_REGISTRY: readonly AccountMappingDef[] = [
     required: true,
   },
   {
+    key: 'stock_waste_expense',
+    label: 'Stock Waste Expense',
+    group: 'inventory',
+    expectedCategories: ['operating_expense', 'other_expense', 'cost_of_goods_sold'],
+    // IPR S13: optional; waste write-offs fall back to Stock Adjustment Expense when unmapped.
+    required: false,
+  },
+  {
+    key: 'stock_expiry_expense',
+    label: 'Stock Expiry Expense',
+    group: 'inventory',
+    expectedCategories: ['operating_expense', 'other_expense', 'cost_of_goods_sold'],
+    // IPR S13: optional; expiry write-offs fall back to Stock Adjustment Expense when unmapped.
+    required: false,
+  },
+  {
     key: 'purchase_price_variance',
     label: 'Purchase Price Variance',
     group: 'inventory',
