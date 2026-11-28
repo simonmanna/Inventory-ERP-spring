@@ -1173,6 +1173,7 @@ public class StockService {
         BigDecimal avg = stockItem != null ? dec(stockItem, "runningAverageCost") : Money.ZERO;
         BigDecimal unitCost = avg.signum() > 0 ? avg : dec(product, "costPrice");
         BigDecimal newAverage = null;
+        BigDecimal shortCorrection = null;
         if ("AVCO".equals(str(product, "costingMethod"))) {
             // IPR C-3 / GL-6 (D3): an AVCO quant is valued at its own average (no cost-price fallback), so a count
             // loss leaves at that average (as an issue does) and a gain onto a quant without an average enters at
@@ -1184,6 +1185,15 @@ public class StockService {
                 if (currentQty.signum() >= 0 && counted.signum() > 0) {
                     newAverage = Money.div(currentQty.multiply(avg.max(Money.ZERO)).add(delta.multiply(unitCost)),
                             counted);
+                } else if (currentQty.signum() < 0) {
+                    // IPR review 3 (#5): a gain onto a negative quant without an average, as a receipt would (receiveCore
+                    // via CostResolver): the quant takes the gain's cost and the short units issued at the old
+                    // average are squared by a negative-stock cost correction, so no value is stranded.
+                    Resolution r = costResolver.resolveReceiptCost(
+                            new ProductCost("AVCO", (BigDecimal) product.get("costPrice")),
+                            new Quant(currentQty, avg.max(Money.ZERO)), delta, unitCost);
+                    newAverage = r.newRunningAverage();
+                    shortCorrection = r.costCorrection();
                 }
             }
         }
@@ -1204,6 +1214,8 @@ public class StockService {
         // ADR-S088 closed-period traceability: the journal memo names the ledger code.
         stockPosting.postAdjustmentAt(dto.productId, dto.locationId, delta, unitCost, date, sourceType, sourceId,
                 "Stock adjustment · " + str(product, "name") + " · " + ledgerCode, dto.openingBalance);
+        postCostCorrection(org, dto.productId, variantId, dto.locationId, counted, str(product, "name"), shortCorrection,
+                date, sourceType, sourceId, ledgerCode);
         sweepAvcoResidue(org, product, dto.productId, variantId, dto.locationId, counted, sourceType, sourceId,
                 ledgerCode, date);
         Map<String, Object> payload = new HashMap<>();
