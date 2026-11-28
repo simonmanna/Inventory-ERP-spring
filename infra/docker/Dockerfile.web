@@ -32,7 +32,7 @@ ENV VITE_ENABLE_BEVERAGE=${VITE_ENABLE_BEVERAGE}     VITE_ENABLE_TASKS=${VITE_EN
 RUN pnpm --filter @erp/shared build
 RUN pnpm --filter @erp/web build
 
-FROM nginx:1.28-alpine AS runtime
+FROM nginx:1.29-alpine AS runtime
 # Security fixes released after the base image.
 RUN apk upgrade --no-cache
 COPY --from=build /app/web/dist /usr/share/nginx/html
