@@ -377,7 +377,10 @@ public class StockService {
         // the quantity this average is computed from.
         LockedQuant quant = lockQuant(org, dto.productId, variantId, dto.locationId, Money.ZERO);
         if (blankCost) {
-            actualUnitCost = currentCost(quant, product, dto.productId, variantId, dto.locationId);
+            // IPR review 3 (#4): the current cost of a standard-governed product is its governing standard (not the
+            // quant average, last receipt or cost price), so a blank cost books no purchase price variance.
+            actualUnitCost = standardUnit != null ? standardUnit
+                    : currentCost(quant, product, dto.productId, variantId, dto.locationId);
             if (standardUnit == null) {
                 unitCost = actualUnitCost;
             }
@@ -805,13 +808,44 @@ public class StockService {
                 }
             }
             // IPR C-2: fewer serial numbers than units (capture_optional) — the rest are picked from the units in stock
-            // (oldest first, a named lot's units first), so no serial unit stays "in stock" for a unit that left.
+            // (oldest first), so no serial unit stays "in stock" for a unit that left.
+            boolean serialLots = bool(product, "batchTracking");
+            // IPR review 3 (#3): a named lot (MANUAL) of a serial+lot product gives its own serial units, then its own
+            // units without a serial; other lots' serial units only for what the lot lacks (as a lot-only product).
+            String namedLot = serialLots && "MANUAL".equals(strategy) && dto.batchNumber != null
+                    && !dto.batchNumber.isBlank() ? dto.batchNumber : null;
+            Set<String> fromOtherLots = new HashSet<>();
             int toPick = qty.intValue() - serialRows.size();
             if (toPick > 0) {
-                List<String> chosen = serialRows.stream().map(r -> (String) r.get("id")).toList();
-                serialRows.addAll(pickSerials(org, dto, variantId, dto.locationId, toPick, chosen,
-                        bool(product, "batchTracking") && "MANUAL".equals(strategy) ? dto.batchNumber : null));
+                List<String> chosen = new ArrayList<>(serialRows.stream().map(r -> (String) r.get("id")).toList());
+                if (dto.unserialisedRestFirst) {
+                    // IPR review 3 (#2): a take-back leaves with units without a serial first (the receipt row's
+                    // unserialised part); serial units of other receipts only for what those do not cover.
+                    toPick -= Math.min(toPick, unserialisedFree(org, dto, variantId, stockItem, serialLots, namedLot,
+                            pickable));
+                }
+                if (namedLot != null && toPick > 0) {
+                    List<Map<String, Object>> inLot = pickSerials(org, dto, variantId, dto.locationId, toPick, chosen,
+                            namedLot, true);
+                    serialRows.addAll(inLot);
+                    inLot.forEach(r -> chosen.add((String) r.get("id")));
+                    toPick -= inLot.size();
+                    if (toPick > 0 && !dto.unserialisedRestFirst) {
+                        toPick -= Math.min(toPick, unserialisedFree(org, dto, variantId, stockItem, true, namedLot,
+                                pickable));
+                    }
+                }
+                if (toPick > 0) {
+                    List<Map<String, Object>> rest = pickSerials(org, dto, variantId, dto.locationId, toPick, chosen,
+                            null, serialLots);
+                    if (namedLot != null) {
+                        rest.forEach(r -> fromOtherLots.add((String) r.get("id")));
+                    }
+                    serialRows.addAll(rest);
+                }
             }
+            String shortNote = namedLot == null ? ledgerNotes
+                    : joinNotes(ledgerNotes, "LOT " + namedLot + " SHORT: drawn from other lots");
             String issueRef = (dto.sourceType != null ? dto.sourceType : "issue") + ":"
                     + (dto.sourceId != null ? dto.sourceId : ledgerCode);
             BigDecimal running = dec(stockItem, "quantity");
@@ -828,7 +862,7 @@ public class StockService {
                 BigDecimal after = running.subtract(BigDecimal.ONE);
                 decrementStockItem(stockItemId, BigDecimal.ONE);
                 ic.row((String) s.get("batchId"), (String) s.get("id"), running, BigDecimal.ONE.negate(), after, sUnit,
-                        sUnit, ledgerNotes);
+                        sUnit, fromOtherLots.contains((String) s.get("id")) ? shortNote : ledgerNotes);
                 totalValue = totalValue.add(sUnit);
                 running = after;
             }
@@ -844,13 +878,22 @@ public class StockService {
                 BigDecimal overflowUnit = dec(stockItem, "runningAverageCost").signum() > 0
                         ? dec(stockItem, "runningAverageCost") : dec(product, "costPrice");
                 BigDecimal overflowValue = overflowUnit.multiply(remaining);
-                if (bool(product, "batchTracking")) {
+                if (serialLots) {
                     // IPR C-1: units without a serial of a serial+lot product leave the lots' unserialised part (FEFO),
-                    // valued at the average as before; only what no lot covers is a lot-less shortfall row.
-                    BigDecimal drawn = issueUnserialisedFromLots(ic, variantId, remaining, running, overflowUnit,
-                            pickable, ledgerNotes);
-                    running = running.subtract(drawn);
-                    remaining = remaining.subtract(drawn);
+                    // valued at the average as before; only what no lot covers is a lot-less shortfall row. IPR review
+                    // 3 (#3): a named lot's unserialised part first, the other lots only for what it lacks.
+                    if (namedLot != null) {
+                        BigDecimal drawn = issueUnserialisedFromLots(ic, variantId, remaining, running, overflowUnit,
+                                pickable + " AND \"batchNumber\" = ?", namedLot, ledgerNotes);
+                        running = running.subtract(drawn);
+                        remaining = remaining.subtract(drawn);
+                    }
+                    if (remaining.signum() > 0) {
+                        BigDecimal drawn = issueUnserialisedFromLots(ic, variantId, remaining, running, overflowUnit,
+                                pickable, null, shortNote);
+                        running = running.subtract(drawn);
+                        remaining = remaining.subtract(drawn);
+                    }
                 }
                 if (remaining.signum() > 0) {
                     BigDecimal after = running.subtract(remaining);
@@ -1130,6 +1173,7 @@ public class StockService {
         BigDecimal avg = stockItem != null ? dec(stockItem, "runningAverageCost") : Money.ZERO;
         BigDecimal unitCost = avg.signum() > 0 ? avg : dec(product, "costPrice");
         BigDecimal newAverage = null;
+        BigDecimal shortCorrection = null;
         if ("AVCO".equals(str(product, "costingMethod"))) {
             // IPR C-3 / GL-6 (D3): an AVCO quant is valued at its own average (no cost-price fallback), so a count
             // loss leaves at that average (as an issue does) and a gain onto a quant without an average enters at
@@ -1141,6 +1185,15 @@ public class StockService {
                 if (currentQty.signum() >= 0 && counted.signum() > 0) {
                     newAverage = Money.div(currentQty.multiply(avg.max(Money.ZERO)).add(delta.multiply(unitCost)),
                             counted);
+                } else if (currentQty.signum() < 0) {
+                    // IPR review 3 (#5): a gain onto a negative quant without an average, as a receipt would (receiveCore
+                    // via CostResolver): the quant takes the gain's cost and the short units issued at the old
+                    // average are squared by a negative-stock cost correction, so no value is stranded.
+                    Resolution r = costResolver.resolveReceiptCost(
+                            new ProductCost("AVCO", (BigDecimal) product.get("costPrice")),
+                            new Quant(currentQty, avg.max(Money.ZERO)), delta, unitCost);
+                    newAverage = r.newRunningAverage();
+                    shortCorrection = r.costCorrection();
                 }
             }
         }
@@ -1161,6 +1214,8 @@ public class StockService {
         // ADR-S088 closed-period traceability: the journal memo names the ledger code.
         stockPosting.postAdjustmentAt(dto.productId, dto.locationId, delta, unitCost, date, sourceType, sourceId,
                 "Stock adjustment · " + str(product, "name") + " · " + ledgerCode, dto.openingBalance);
+        postCostCorrection(org, dto.productId, variantId, dto.locationId, counted, str(product, "name"), shortCorrection,
+                date, sourceType, sourceId, ledgerCode);
         sweepAvcoResidue(org, product, dto.productId, variantId, dto.locationId, counted, sourceType, sourceId,
                 ledgerCode, date);
         Map<String, Object> payload = new HashMap<>();
@@ -1555,7 +1610,7 @@ public class StockService {
     /**
      * IPR C-7 / C-2: the serial units a transfer moves. Named serial numbers ({@link StockMove#serialNumbers}) must all
      * be in stock at the source (400 otherwise) and may not outnumber the units; the remaining units are picked from
-     * the source's in-stock units ({@link #pickSerials}: pins, a named lot's units first, then oldest first). Read under
+     * the source's in-stock units ({@link #pickSerials}: pins, a named lot's units only, then oldest first). Read under
      * both quant locks.
      */
     private List<Map<String, Object>> transferSerials(String org, StockMove dto, String variantId, BigDecimal qty,
@@ -1582,9 +1637,23 @@ public class StockService {
                         + String.join(", ", requested.stream().filter(n -> !found.contains(n)).toList()));
             }
         }
+        // IPR review 3 (#1): a transfer naming a lot moves that lot only (its lot rows are the ones decremented): its
+        // serial units, then its units without a serial — never another lot's serial unit.
+        String lot = batchTracking && dto.batchNumber != null && !dto.batchNumber.isBlank() ? dto.batchNumber : null;
+        if (lot != null && !rows.isEmpty()) {
+            List<String> outside = jdbc.sql("SELECT s.\"serialNumber\" FROM \"InventorySerial\" s LEFT JOIN"
+                            + " \"InventoryBatch\" b ON b.id = s.\"batchId\" AND b.\"organizationId\" = s.\"organizationId\""
+                            + " WHERE s.\"organizationId\" = ? AND s.id = ANY(?::text[]) AND b.\"batchNumber\" IS DISTINCT"
+                            + " FROM ? ORDER BY s.\"serialNumber\"")
+                    .params(org, rows.stream().map(r -> (String) r.get("id")).toArray(String[]::new), lot)
+                    .query(String.class).list();
+            if (!outside.isEmpty()) {
+                throw ApiException.badRequest("Serial number(s) " + String.join(", ", outside) + " are not in batch "
+                        + lot + " at the source location");
+            }
+        }
         rows.addAll(pickSerials(org, dto, variantId, dto.fromLocationId, qty.intValueExact() - rows.size(),
-                rows.stream().map(r -> (String) r.get("id")).toList(),
-                batchTracking && dto.batchNumber != null && !dto.batchNumber.isBlank() ? dto.batchNumber : null));
+                rows.stream().map(r -> (String) r.get("id")).toList(), lot, batchTracking));
         return rows;
     }
 
@@ -1696,8 +1765,12 @@ public class StockService {
             }
         }
         for (String loc : sorted) {
-            jdbc.sql("SELECT pg_advisory_xact_lock_shared(hashtext(?)::bigint)").param(freezeLockKey(org, loc))
-                    .query().listOfRows();
+            if (dto.countSessionId == null) {
+                // A count's own posting (countSessionId) does not ask for L3b: it already holds the quant locks (L4).
+                // It is checked against the committed freezes below, so only the freeze's own session is exempt.
+                jdbc.sql("SELECT pg_advisory_xact_lock_shared(hashtext(?)::bigint)").param(freezeLockKey(org, loc))
+                        .query().listOfRows();
+            }
             Map<String, Object> frozen = SqlRows.one(jdbc.sql("SELECT s.id, s.\"countCode\", l.name FROM"
                             + " \"InventoryCountSession\" s JOIN \"InventoryLocation\" l ON l.id = s.\"locationId\""
                             + " WHERE s.\"organizationId\" = ? AND s.\"locationId\" = ? AND s.status = 'draft'"
@@ -1719,9 +1792,9 @@ public class StockService {
             "credit_note", "credit_note_cancel");
 
     private static boolean freezeExempt(StockMove dto) {
-        // A count's own posting (countSessionId) is exempt: with one draft per location (S4) the only freeze at its
-        // location is its own, and it already holds the quant locks (L4), so it must not ask for L3b after them.
-        if (isSaleDrain(dto) || LATE_COUNT_CORRECTION.equals(dto.sourceType) || dto.countSessionId != null
+        // IPR review 3 (#7): a count's own posting (countSessionId) is not exempt here: assertNotFrozen lets through
+        // only the session that holds the freeze (without taking L3b, see there).
+        if (isSaleDrain(dto) || LATE_COUNT_CORRECTION.equals(dto.sourceType)
                 || (dto.sourceType != null && SALE_SOURCES.contains(dto.sourceType))) {
             return true;
         }
@@ -1810,20 +1883,43 @@ public class StockService {
             String problem = stockPosting.adjustmentPostingProblem(str(r, "productId"), change.negate(),
                     k.openingBalance);
             if (problem != null) {
-                log.warn("[stock] late count correction of {} against count {} not posted: {}", r.get("ledgerCode"),
-                        line.get("countCode"), problem);
+                flagLateCorrection(org, r, line, change, problem);
                 continue;
             }
-            jdbc.sql("SAVEPOINT late_count_correction").update();
+            // IPR review 3 (#6): the correction runs under an isolated savepoint. A refusal from anywhere inside it
+            // (the engine, or a proxied @Transactional bean such as the posting service: posting rules, dimensions,
+            // cost centres, periods, the goods-in-transit swap, a cost correction or residue sweep) rolls back to the
+            // savepoint without marking the late movement's transaction rollback-only, and the events the correction
+            // registered (publishOnCommit) are dropped with it. A correction that fails is flagged for review.
             try {
-                adjust(k);
-                jdbc.sql("RELEASE SAVEPOINT late_count_correction").update();
+                com.inventoryerp.kernel.common.Savepoints.runIsolated(jdbc, () -> adjust(k));
             } catch (RuntimeException e) {
-                jdbc.sql("ROLLBACK TO SAVEPOINT late_count_correction").update();
-                log.warn("[stock] late count correction of {} against count {} not posted: {}", r.get("ledgerCode"),
-                        line.get("countCode"), e.getMessage());
+                flagLateCorrection(org, r, line, change, e.getMessage() == null ? e.getClass().getSimpleName()
+                        : e.getMessage());
             }
         }
+    }
+
+    /**
+     * IPR review 3 (#6): a late count correction the engine could not post is never dropped silently: it stays on the
+     * count's late-transactions list ({@code uncorrected}) and an open {@code InventoryException} of kind
+     * {@code late_count_correction_failed} names the late row, the count line and the reason, for a person to resolve.
+     */
+    private void flagLateCorrection(String org, Map<String, Object> r, Map<String, Object> line, BigDecimal change,
+            String reason) {
+        log.warn("[stock] late count correction of {} against count {} not posted: {}", r.get("ledgerCode"),
+                line.get("countCode"), reason);
+        jdbc.sql("INSERT INTO \"InventoryException\" (id, \"organizationId\", \"locationId\", \"productId\", description,"
+                        + " quantity, kind, reason, payload, status, \"createdAt\") VALUES (?, ?, ?, ?, ?, ?,"
+                        + " 'late_count_correction_failed', ?, ?::jsonb, 'open', " + NOW + ")")
+                .params(UUID.randomUUID().toString(), org, r.get("locationId"), r.get("productId"),
+                        "Late count correction not posted: review count " + line.get("countCode"), change.negate(),
+                        "Late " + r.get("ledgerCode") + " was before count " + line.get("countCode") + "; its count"
+                                + " correction could not be posted: " + reason,
+                        com.inventoryerp.shared.web.EntityJson.toJson(Obj.of("lateLedgerId", r.get("id"), "ledgerCode",
+                                r.get("ledgerCode"), "countLineId", line.get("id"), "countSessionId",
+                                line.get("sessionId"), "countCode", line.get("countCode"))))
+                .update();
     }
 
     /**
@@ -2158,13 +2254,16 @@ public class StockService {
 
     /**
      * IPR C-2 / C-7 / C-9: up to {@code limit} in-stock serial units of the move's quant at {@code locationId}, other
-     * than {@code excludeIds}: the move's pinned units only (or first, with {@link StockMove#pinFallback}), then the
-     * units of lots numbered {@code preferLotNumber} (a named lot of a serial+lot product), then oldest receipt first
-     * (C-9: kept, FIFO by receipt is the documented default; ties by serial number so the pick is deterministic).
-     * Read under the quant lock (L4/L5), so a concurrent move of the same cell cannot pick the same units.
+     * than {@code excludeIds}: the move's pinned units only (or first, with {@link StockMove#pinFallback}), then oldest
+     * receipt first (C-9: kept, FIFO by receipt is the documented default; ties by serial number so the pick is
+     * deterministic). IPR review 3 (#1 / #3): with {@code onlyLotNumber} only units of that lot at the location; for a
+     * lot-tracked product ({@code batchTracking}) whose move pins lots ({@link StockMove#pinnedBatchIds}, no serial pins)
+     * only units of those lots (or theirs first, with {@link StockMove#pinFallback}) — the lot rows the move decrements
+     * are the lots of the units it picks. Read under the quant lock (L4/L5), so a concurrent move of the same cell
+     * cannot pick the same units.
      */
     private List<Map<String, Object>> pickSerials(String org, StockMove dto, String variantId, String locationId,
-            int limit, java.util.Collection<String> excludeIds, String preferLotNumber) {
+            int limit, java.util.Collection<String> excludeIds, String onlyLotNumber, boolean batchTracking) {
         if (limit <= 0) {
             return new ArrayList<>();
         }
@@ -2182,20 +2281,57 @@ public class StockService {
             sql.append(" AND id = ANY(?::text[])");
             params.add(dto.pinnedSerialIds.toArray(String[]::new));
         }
+        boolean lotPins = batchTracking && dto.pinnedBatchIds != null && dto.pinnedSerialIds == null;
+        if (lotPins && !dto.pinFallback) {
+            sql.append(" AND \"batchId\" = ANY(?::text[])");
+            params.add(dto.pinnedBatchIds.toArray(String[]::new));
+        }
+        if (onlyLotNumber != null && !onlyLotNumber.isBlank()) {
+            sql.append(" AND \"batchId\" IN (SELECT b.id FROM \"InventoryBatch\" b WHERE b.\"organizationId\" = ? AND"
+                    + " b.\"productId\" = ? AND b.\"variantId\" IS NOT DISTINCT FROM ? AND b.\"locationId\" = ? AND"
+                    + " b.\"batchNumber\" = ?)");
+            params.add(org);
+            params.add(dto.productId);
+            params.add(variantId);
+            params.add(locationId);
+            params.add(onlyLotNumber);
+        }
         sql.append(" ORDER BY ");
         if (dto.pinnedSerialIds != null && dto.pinFallback) {
             sql.append("(id = ANY(?::text[])) DESC, ");
             params.add(dto.pinnedSerialIds.toArray(String[]::new));
         }
-        if (preferLotNumber != null && !preferLotNumber.isBlank()) {
-            sql.append("(\"batchId\" IN (SELECT b.id FROM \"InventoryBatch\" b WHERE b.\"organizationId\" = ? AND"
-                    + " b.\"batchNumber\" = ?)) DESC, ");
-            params.add(org);
-            params.add(preferLotNumber);
+        if (lotPins && dto.pinFallback) {
+            sql.append("COALESCE(\"batchId\" = ANY(?::text[]), false) DESC, ");
+            params.add(dto.pinnedBatchIds.toArray(String[]::new));
         }
         sql.append("\"receivedAt\" ASC, \"serialNumber\" ASC LIMIT ?");
         params.add(limit);
         return new ArrayList<>(SqlRows.list(jdbc.sql(sql.toString()).params(params)));
+    }
+
+    /**
+     * IPR review 3 (#2 / #3): the units without a serial an issue can draw (whole units, never negative). Without lots:
+     * the quant's on-hand less its in-stock serial units. With lots: the unserialised part of the open lots the move may
+     * draw (its pinned lots, lot {@code namedLot} when given; {@code pickable} applied). Read under the quant lock.
+     */
+    private int unserialisedFree(String org, StockMove dto, String variantId, Map<String, Object> stockItem,
+            boolean serialLots, String namedLot, String pickable) {
+        BigDecimal free;
+        if (serialLots) {
+            free = lots(org, dto, variantId, "SELECT COALESCE(SUM(GREATEST(quantity - (SELECT count(*) FROM"
+                            + " \"InventorySerial\" s WHERE s.\"organizationId\" = \"InventoryBatch\".\"organizationId\""
+                            + " AND s.\"batchId\" = \"InventoryBatch\".id AND s.status = 'in_stock'), 0)), 0)",
+                    pickable + (namedLot != null ? " AND \"batchNumber\" = ?" : ""), "", namedLot)
+                    .query(BigDecimal.class).single();
+        } else {
+            long serials = jdbc.sql("SELECT count(*) FROM \"InventorySerial\" WHERE \"organizationId\" = ? AND"
+                            + " \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ? AND \"locationId\" = ? AND"
+                            + " status = 'in_stock'")
+                    .params(org, dto.productId, variantId, dto.locationId).query(Long.class).single();
+            free = dec(stockItem, "quantity").subtract(BigDecimal.valueOf(serials));
+        }
+        return free.signum() <= 0 ? 0 : free.setScale(0, RoundingMode.FLOOR).intValueExact();
     }
 
     /**
@@ -2222,12 +2358,12 @@ public class StockService {
      * {@code unit} (the quant's average, as units without a serial always were). Returns the quantity drawn.
      */
     private BigDecimal issueUnserialisedFromLots(IssueCtx ic, String variantId, BigDecimal remaining,
-            BigDecimal running, BigDecimal unit, String pickable, String notes) {
+            BigDecimal running, BigDecimal unit, String extra, Object extraParam, String notes) {
         List<Map<String, Object>> lots = SqlRows.list(lots(ic.org, ic.dto, variantId, "SELECT id, quantity,"
                         + " quantity - (SELECT count(*) FROM \"InventorySerial\" s WHERE s.\"organizationId\" ="
                         + " \"InventoryBatch\".\"organizationId\" AND s.\"batchId\" = \"InventoryBatch\".id AND s.status ="
-                        + " 'in_stock') AS free", pickable, " ORDER BY \"expiryDate\" ASC NULLS LAST, \"receivedAt\" ASC",
-                null));
+                        + " 'in_stock') AS free", extra, " ORDER BY \"expiryDate\" ASC NULLS LAST, \"receivedAt\" ASC",
+                extraParam));
         BigDecimal drawn = Money.ZERO;
         for (Map<String, Object> lot : lots) {
             BigDecimal left = remaining.subtract(drawn);

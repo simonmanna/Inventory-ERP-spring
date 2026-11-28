@@ -768,6 +768,25 @@ Evidence: [review1-fixes.md](../audits/ipr-evidence/review1-fixes.md). Branch `f
   the device `stock.count` op drain the location's sale stock postings with no transaction open, before the submit's
   transaction; `InventoryCountService.submit` itself no longer drains (a stuck posting is still refused).
 
+IPR review 3, stream R3 (branch `fix/ipr-review3`, **pending owner sign-off**; evidence
+[review3-engine](../audits/ipr-evidence/review3-engine.md)):
+
+- **A named lot of a serial+lot product (#1, #3).** A transfer naming a lot moves that lot's serial units, then its
+  units without a serial; never another lot's serial unit. Naming serial numbers outside the named lot is refused:
+  400 "Serial number(s) <list> are not in batch <lot> at the source location". An issue naming a lot (MANUAL) takes
+  the lot's serial units, then its units without a serial, and other lots only for what the lot lacks (rows noted
+  "LOT <lot> SHORT: drawn from other lots", as for lot-only products). Moves that pin lots (transit, take-backs) pick
+  serial units of those lots only.
+- **Take-backs of a serial product's receipt (#2).** A reversal / issue-back pins each receipt row's own serial units
+  (the document's received units shared out across its rows) and takes the row's unserialised part as units without
+  a serial; other receipts' serial units are picked only when no unit without a serial is left. The forward-issue
+  rule (IPR C-2: the rest is picked from the serial units in stock) is unchanged.
+- **Blank receipt cost of a STANDARD product (#4).** It enters at the governing standard, and GRNI / AP carry the
+  standard too: no purchase price variance (D3: blank = current cost).
+- **AVCO count gain on a negative quant (#5).** As a receipt: the quant takes the gain's cost and the short units are
+  squared by a negative-stock cost correction (value-only ledger row, Dr cost of sales / Cr stock).
+- **Count freeze (#7) and late corrections (#6):** see the count spec §6 and §4.4a.
+
 ## Status
 
 P3a: 69/69 routes. Tests: `InventoryIT` (locations, items, ledger, document flows incl. approve + reverse, transit,
