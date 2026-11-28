@@ -170,7 +170,7 @@ accounting, engine core). Every review finding was fixed by a follow-up stream w
 | R1 | Security and sales/fleet review fixes (V722) | `ipr-evidence/review1-fixes.md` |
 | R2 | Accounting review fixes: close checks as of period end, WIP tie-out, stage-reversal late cost, S-2 analytics | `ipr-evidence/review2-fixes.md` |
 | R3 | Engine-core review fixes (serial+lot picking, take-back serials, STANDARD blank cost, savepoint, freeze exemption) | `ipr-evidence/review3-engine.md` |
-| Integrator | Period close with an abnormal-balance P&L account (`CloseProcessIT.abnormalBalanceAccountCloses`, red → green); web zero-cost reason input | commits on `fix/ipr-p15` |
+| Integrator | Period close with an abnormal-balance P&L account (`CloseProcessIT.abnormalBalanceAccountCloses`, red → green); the S-6 regression in `FilesService.signDownload` (`DmsIT`, red → green); a rolled-back isolated savepoint now drops its after-commit callbacks (`SavepointsIsolationTest`, red → green); web zero-cost reason input | commits on `fix/ipr-p15` |
 
 **Partly done (recorded, not hidden):**
 - X-1d beverage carry-forward and M-30 tank dip: fixed, but covered only by existing tests (no red IT).
@@ -181,6 +181,8 @@ accounting, engine core). Every review finding was fixed by a follow-up stream w
 - Goods in transit (opt-in `inventory.transitGlSeparation`, default off): the residue sweep and the transit reversal
   difference still post to the stock account; no reclassification when the setting is switched on.
 - Optional `lockFreezeExclusive` variant: not built.
+- Entities a failed isolated correction already flushed stay managed in the Hibernate session after the savepoint
+  rollback. A later change to one of them fails loudly at commit; none of the correction paths changes them.
 
 **Owner sign-off items** (nothing below is in force on live until the owner merges and deploys):
 
@@ -213,12 +215,24 @@ per organisation) are defined in the plan. Their status is filled in at each gat
 
 | Gate | Status | Evidence |
 |---|---|---|
-| G1 | not started | |
-| G2 | not started | |
-| G3 | not started | |
-| G4 | not started | |
-| G5 | not started | |
-| G6 | not started | |
+| G1 | met on test evidence; owner review pending | Integrity green after every lifecycle step in the stream ITs; serial/lot ITs (`IprSerialRestockIT`, `IprReview3EngineIT`); restock links (SW-1..SW-5); `InventoryConcurrencyIT`, delivery and count race ITs. The data checks were not re-run on post-fix test data as a separate step |
+| G2 | met on test evidence; owner review pending | Valuation, GL and GRNI asserted per scenario (`assertGlTieOut`); WIP tie-out (`ManufacturingLifecycleIT` 11/11); `wip_tieout` is still report-only (sign-off item 18) |
+| G3 | met on test evidence; owner review pending | Branch, cost and SoD ITs (`IprBranchScopeCostIT`, `IprStockControlsIT`); R2 races; exactly-once POS/sync (`PosStockPostingRecoveryIT`, `CountCutoffIT`) |
+| G4 | met on test evidence; owner review pending | `OpeningStockImportIT` (atomic, idempotent, stale preview, reconciliation); OPERATIONS §8c checklist; alerts to permission holders (Phase 0) |
+| G5 | partly met | Full `./gradlew build` green on Testcontainers (2026-11-28, 3,832 tests, 0 failed; see below). Not done yet: parity scenarios, the DEMO browser test, the R7 rehearsals on a restored live copy |
+| G6 | open (owner actions) | Live-copy checks reviewed in Phase 0. GQDEMO 600 needs the owner-approved compensating journal; negative quants (DEMO 2, GQDEMO 8) and the 2 pre-R1 `cash_sale_void` rows need accept-or-repair decisions; the DEMO GL-1 line is a report fix (no data change) |
+
+### Full build evidence (2026-11-28)
+
+- **Build 1** on `fix/ipr-p15` before R3: 3,821 tests, 26 failed.
+  - 25 were the known UTC business-date window (the run crossed 21:00–24:00 UTC). All 10 affected classes passed
+    90/90 when rerun after 00:00 UTC.
+  - 1 was a real regression from S-6: `DmsIT.fileVaultHardening` (another org's file answered 201, not 404). Fixed in
+    `FilesService.signDownload`, red → green on Testcontainers.
+- **Build 2** on `fix/ipr-p15` after R3 and the follow-ups (`./gradlew --continue build`, Testcontainers, 01:02–01:59
+  UTC): **BUILD SUCCESSFUL, 3,832 tests, 0 failed.** Every quality gate passed (Spotless, ArchUnit, Modularity,
+  JaCoCo).
+- **Web:** `pnpm web:typecheck` clean; `pnpm --filter @erp/web test` 268/268.
 
 ## Phase 0 deliverables
 
