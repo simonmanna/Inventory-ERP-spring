@@ -63,6 +63,19 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Deviations
 
+- **Taxed down payments are deducted, not applied** (ADR-S094 C1b, V731; accountant decisions AD-14, AD-15, AD-17
+  recorded 2026-11-28 under the owner's recommended-option instruction). Nest has no down-payment invoices; these rules
+  extend the Spring-only billing of sales orders. Details in `sales-postings.md` §5a.
+  - An invoice line may have a negative quantity (the deduction of a down payment). Posting is sign-aware: negative
+    revenue and tax lines post as debits, zero lines are skipped, a zero-total invoice posts without an AR line and is
+    `paid` at once; a negative total is refused ("An invoice total cannot be negative").
+  - `POST /customer-deposits/:id/apply` and `/refund` refuse a deposit registered from a down-payment invoice with VAT
+    (it is deducted on the final invoice, or credited on its own invoice).
+  - A credit note on a down-payment invoice credits the customer-deposit account only, with the down payment's tax,
+    and consumes the deposit (refused when less is left); reversing it, or cancelling a final invoice that deducted a down payment, releases
+    the deposit.
+  - New post-guard hook `InvoicePostGuard.afterPost`, run in the posting transaction after the transition.
+
 - **Sales invoices and credit notes are numbered when posted** (sales readiness INV-11, owner decision 2026-11-26).
   Nest numbers a document when the draft is created (`INV-<year>-` / `CN-<year>-` from a PostgreSQL sequence, which
   leaves gaps when drafts are deleted or a post rolls back). Drafts now carry a temporary reference

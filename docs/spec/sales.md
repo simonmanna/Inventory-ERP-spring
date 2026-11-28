@@ -311,6 +311,11 @@ branch scope.
 
 ## Deviations
 
+- **Taxed down payments are deducted on the final invoice** (ADR-S094 C1b, V731, fixes D-VAT-1; AD-14 pro-rata, AD-15,
+  AD-17). With `depositTaxPoint = receipt` a regular invoice of `POST /sales/orders/:id/invoices` carries one negative
+  deduction line per posted taxed down payment and consumes its deposit when posted. A regular invoice is refused while
+  a taxed down-payment invoice of the order is still a draft. See `sales-postings.md` §5a and the
+  [invoicing deviation](invoicing.md#deviations).
 - **R6 accounting policy settings (2026-11-26, V683, owner to approve).** New `SalesSettings` keys, each defaulting to
   the shipped behaviour: `showroomTaxPoint` (`at_confirm` | `at_invoice`), `overOrderExcess` (`bill` | `absorb`),
   `rebateTaxId` (tax or null). `depositTaxPoint = receipt` now also refuses a plain advance on a taxed order at

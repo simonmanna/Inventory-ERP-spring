@@ -555,6 +555,29 @@ public class CreditNoteService {
         List<Map<String, Object>> lines = builder.lines(id, false);
         String partnerId = (String) cn.get("partnerId");
         assertWithinInvoice(id, (String) cn.get("reversedDocumentId"), lines);
+        // ADR-S094 C1b (AD-15): a credit note on a down-payment invoice takes back the advance it recorded — on the
+        // deposit account only — and reduces the deposit (after the entry, below), refused once the deposit was consumed.
+        boolean downPayment = credited != null && Boolean.TRUE.equals(jdbc.sql("SELECT data->>'downPaymentFor' IS NOT"
+                + " NULL FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?").params(credited, org())
+                .query(Boolean.class).optional().orElse(false));
+        BigDecimal depositCredit = Money.ZERO;
+        if (downPayment) {
+            String depositAccount = deposits.getObject().depositAccount();
+            String dpTax = jdbc.sql("SELECT \"taxId\" FROM \"DocumentLine\" WHERE \"documentId\" = ? AND \"accountId\" = ?"
+                    + " ORDER BY \"lineNumber\" LIMIT 1").params(credited, depositAccount).query(String.class).optional()
+                    .orElse(null);
+            for (Map<String, Object> ln : lines) {
+                if (ln.get("productId") != null || !depositAccount.equals(ln.get("accountId"))) {
+                    throw ApiException.badRequest("A credit note on a down-payment invoice credits the customer deposit"
+                            + " account only");
+                }
+                if (!java.util.Objects.equals(dpTax, ln.get("taxId"))) {
+                    throw ApiException.badRequest("A credit note on a down-payment invoice takes the tax of the down"
+                            + " payment");
+                }
+                depositCredit = depositCredit.add(Money.dec(ln.get("subtotal")));
+            }
+        }
         Grouped g = builder.groupForPosting(partnerId, lines, "sales", null);
         List<Line> post = new ArrayList<>();
         g.itemLines().forEach(it -> post.add(new Line(it.accountId(), JsNumbers.dec(it.amount()), null, partnerId,
@@ -594,6 +617,9 @@ public class CreditNoteService {
         // ACC-4 (B9): what the invoice could not absorb stays open on the credit note for later allocation.
         jdbc.sql("UPDATE \"Document\" SET \"amountResidual\" = ? WHERE id = ?").params(total.subtract(applied), id)
                 .update();
+        if (downPayment) {
+            deposits.getObject().consume(credited, id, depositCredit, "credit_note");
+        }
         if ("restock".equals(disposition)) {
             // Deliberate deviation from Nest (SG-0): a failed restock now fails the whole post, so the books never credit
             // goods that did not come back. Goods that are not coming back are posted with disposition scrap.
@@ -647,6 +673,14 @@ public class CreditNoteService {
     // ------------------------------------------------------------------ reversal
 
     private StockReversalService stockReturns;
+
+    /** ADR-S094 C1b: resolved lazily (the deposit service depends on payments). */
+    private org.springframework.beans.factory.ObjectProvider<CustomerDepositService> deposits;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setDeposits(org.springframework.beans.factory.ObjectProvider<CustomerDepositService> deposits) {
+        this.deposits = deposits;
+    }
 
     /** R1: restocks are posted against the credited invoice's original issue. */
     @org.springframework.beans.factory.annotation.Autowired
@@ -763,6 +797,8 @@ public class CreditNoteService {
         jdbc.sql("UPDATE \"Document\" SET status = 'cancelled', \"amountResidual\" = 0, \"cancelledAt\" = " + NOW + ","
                 + " \"cancelledBy\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?").params(TenantContext.userId(), id)
                 .update();
+        // ADR-S094 C1b: the down-payment deposit this note reduced is open again.
+        deposits.getObject().releaseConsumption(id);
         reversals.record(new com.inventoryerp.accounting.application.DocumentReversalService.Recording("credit_note", id,
                 number, (String) cn.get("partnerId"), reason, "Document", List.of("credit_note", "credit_note_fx"),
                 List.of("credit_note_cancel"), unwound));
