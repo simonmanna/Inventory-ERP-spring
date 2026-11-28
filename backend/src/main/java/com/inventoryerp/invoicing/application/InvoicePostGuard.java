@@ -16,4 +16,10 @@ public interface InvoicePostGuard {
      * deposits its deductions consume. Throwing rolls the post back.
      */
     default void afterPost(String documentId) {}
+
+    /**
+     * ADR-S094 C2b: called inside the cancelling transaction of a posted invoice, right after the workflow reversed its
+     * journal entry: a module reverses what it booked for the post (a revenue deferral). Throwing rolls the cancel back.
+     */
+    default void afterCancel(String documentId) {}
 }

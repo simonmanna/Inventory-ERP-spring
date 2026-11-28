@@ -101,6 +101,14 @@ public class SalesOrderService {
     void setOutcome(SalesOutcomeService outcome) {
         this.outcome = outcome;
     }
+    private SalesRevenueDeferralService deferrals;
+
+    /** ADR-S094 C2b: revenue invoiced before delivery (shown per line; closing short waits for it). */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setDeferrals(SalesRevenueDeferralService deferrals) {
+        this.deferrals = deferrals;
+    }
+
     private SalesAgreementService agreements;
     private SalesAccess access;
     private SalesAlerts alerts;
@@ -210,6 +218,11 @@ public class SalesOrderService {
         Map<String, Object> o = require(id);
         List<Map<String, Object>> lines = lines(id);
         o.put("lines", lines);
+        // ADR-S094 C2b: revenue invoiced before delivery, per line and in total (functional currency)
+        Map<String, Map<String, Object>> deferred = deferrals.view(id);
+        lines.forEach(l -> l.putAll(deferred.getOrDefault(str(l.get("id")), Map.of("qtyDeferred", 0, "amountDeferred",
+                0))));
+        o.put("revenueDeferred", JsNumbers.js(deferrals.deferred(id)));
         if ("draft".equals(o.get("status"))) {
             o.put("stockWarnings", atp.shortages(id));
         }
@@ -1483,6 +1496,13 @@ public class SalesOrderService {
         }
         if (l.get("closedShortAt") != null) {
             throw ApiException.badRequest("Line is already closed short");
+        }
+        // ADR-S094 C2b (§3.6): goods invoiced but not delivered are owed to the customer (a contract liability): they are
+        // delivered, or credited first (credit-undelivered credits them and closes the line in one step).
+        BigDecimal waiting = deferrals.undelivered(id, lineId);
+        if (waiting.signum() > 0) {
+            throw ApiException.badRequest(l.get("description") + ": " + waiting.stripTrailingZeros().toPlainString()
+                    + " invoiced but not delivered. Deliver them, or credit the undelivered quantity to close the line");
         }
         BigDecimal floor = committedFloor(l);
         BigDecimal cancel = dec(l.get("quantity")).subtract(floor);

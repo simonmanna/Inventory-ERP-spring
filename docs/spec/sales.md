@@ -337,6 +337,20 @@ branch scope.
     be restocked. A refund defaults to the tender of the original receipt.
   - A claim without goods (write-off) needs `sales:return:write_off` and an approver other than the requester.
   - `POST /sales/credit-notes` refuses type `return` against a sale invoice: returned goods go through a sales return.
+- **Revenue invoiced before the goods leave is deferred** (ADR-S094 C2b, V734; AD-2 = contract liability, AD-16 =
+  release at dispatch, approved 2026-11-28).
+  - A posted invoice that bills more than has been dispatched moves the revenue of the difference to the contract
+    liability (`unearned_revenue`): Dr revenue / Cr contract liability, source `sales_revenue_deferral`. Dispatch
+    releases it (source `sales_revenue_release`). A POD with goods brought back, or a returned load, holds it again. A
+    cancelled invoice drops it.
+  - Each invoice line keeps its own functional amount per unit, so the liability is never revalued.
+  - The sale detail shows `qtyDeferred` / `amountDeferred` per line and `revenueDeferred` on the sale.
+  - `POST /sales/orders/:id/lines/:lineId/credit-undelivered` (new): needs `sales:order:close_short` +
+    `sales:credit_note:write`, `{reason}`, and an Idempotency-Key. It posts quantity credit notes for what was invoiced
+    but not delivered, then closes the line short.
+  - `close-short` is refused while a line has invoiced goods not delivered.
+  - Limitation: a value credit note on goods still deferred reduces revenue at once and leaves the deferral as it is.
+    Revenue and the liability are right again once the goods leave.
 - **Taxed down payments are deducted on the final invoice** (ADR-S094 C1b, V731, fixes D-VAT-1; AD-14 pro-rata, AD-15,
   AD-17). With `depositTaxPoint = receipt` a regular invoice of `POST /sales/orders/:id/invoices` carries one negative
   deduction line per posted taxed down payment and consumes its deposit when posted. A regular invoice is refused while

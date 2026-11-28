@@ -1,6 +1,7 @@
 package com.inventoryerp.fleet.application;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -49,6 +50,14 @@ public interface DeliverySourcePort {
     default BigDecimal overDeliveryTolerancePct(String sourceLineId) {
         return BigDecimal.ZERO;
     }
+
+    /**
+     * ADR-S094 C2b: goods of {@code sourceId} left on, or came back from, trip {@code loadId} at {@code at} (dispatch,
+     * proof of delivery with goods returned, load returned). Called inside that transaction after the trip's quantities
+     * and status are written, so the source books what follows from it (revenue invoiced before the goods left is
+     * released, or held again on a bring-back) atomically with the movement. Default: nothing.
+     */
+    default void deliveryChanged(String sourceId, String loadId, Instant at) {}
 
     record Source(String number, String partnerId, String branchId, String locationId, String siteId,
             LocalDate requestedDate, List<SourceLine> lines) {}

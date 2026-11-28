@@ -344,6 +344,18 @@ public final class SalesController {
             return svc.closeShort(id, lineId, text(b, "reason"));
         }
 
+        /**
+         * ADR-S094 C2b: credit what the line invoiced beyond what was delivered (posted quantity credit notes, released
+         * against the contract liability), then close it short. A money route: an Idempotency-Key is required.
+         */
+        @PostMapping("/{id}/lines/{lineId}/credit-undelivered")
+        @Idempotent(required = true)
+        @RequirePermissions({Permissions.SALES__ORDER_CLOSE_SHORT, Permissions.SALES__CREDIT_NOTE_WRITE})
+        public Map<String, Object> creditUndelivered(@PathVariable String id, @PathVariable String lineId,
+                @RequestBody(required = false) Map<String, Object> b) {
+            return billing.creditUndelivered(id, lineId, text(b, "reason"));
+        }
+
         @GetMapping("/{id}/atp")
         @RequirePermissions(Permissions.SALES__ORDER_READ)
         public Map<String, Object> atp(@PathVariable String id) {

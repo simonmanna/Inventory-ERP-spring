@@ -1185,9 +1185,24 @@ public class FleetDispatchService {
         audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, "issue", Obj.of("status", t.get("status")),
                 Obj.of("status", "dispatched", "stockValue", JsNumbers.dec(total), "deliveryNoteNumber",
                         after.get("deliveryNoteNumber"))));
+        deliveryChanged(order, id, now);
         orders.refreshStatus((String) order.get("id"));
         events.publishOnCommit(DomainEvents.FLEET_TRIP_DISPATCHED, tripEvent(after));
         return get(id);
+    }
+
+    /**
+     * ADR-S094 C2b: tell the source document what left or came back on trip {@code tripId}, inside this transaction
+     * (its revenue deferral follows the goods).
+     */
+    private void deliveryChanged(Map<String, Object> order, String tripId, Instant at) {
+        if (order.get("sourceType") == null || order.get("sourceId") == null) {
+            return;
+        }
+        DeliverySourcePort port = orders.sourcePort((String) order.get("sourceType"), (String) order.get("sourceId"));
+        if (port != null) {
+            port.deliveryChanged((String) order.get("sourceId"), tripId, at);
+        }
     }
 
     /** dispatched → in transit (left the yard gate). */
@@ -1343,6 +1358,7 @@ public class FleetDispatchService {
         }
         audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, "update", Obj.of("status", t.get("status")),
                 Obj.of("status", "delivered", "receiver", in.receiverName().trim(), "discrepancies", diffs.size())));
+        deliveryChanged(order, id, receivedAt);
         orders.refreshStatus((String) order.get("id"));
         events.publishOnCommit(DomainEvents.FLEET_TRIP_DELIVERED, tripEvent(after));
         return get(id);
@@ -1535,6 +1551,7 @@ public class FleetDispatchService {
         quantities.refreshLoad(id);
         audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, "receive", Obj.of("status", t.get("status")),
                 Obj.of("status", "returned", "reason", in.reason().trim())));
+        deliveryChanged(order, id, now);
         orders.refreshStatus((String) order.get("id"));
         Map<String, Object> ev = tripEvent(after);
         ev.put("reason", in.reason().trim());

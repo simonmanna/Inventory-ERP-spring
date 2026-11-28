@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { RecordChatter } from '@/features/communication/record-chatter';
 import { toast } from 'sonner';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, Copy, FileSignature, FileText, FolderKanban, History, Pause, Play, Plus, Receipt, Scissors, Trash2, Truck, Undo2, UserPlus, XCircle } from 'lucide-react';
+import { ChevronDown, Copy, FileMinus, FileSignature, FileText, FolderKanban, History, Pause, Play, Plus, Receipt, Scissors, Trash2, Truck, Undo2, UserPlus, XCircle } from 'lucide-react';
 import { PartnerCreateDialog } from '@/pages/partners/PartnerCreateDialog';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
@@ -41,6 +41,7 @@ import { AvailabilityPanel } from './AvailabilityPanel';
 import { FulfilmentPanel } from './FulfilmentPanel';
 import { emptyHandover, saveHandoverDraft, type HandoverForm } from './handover-draft';
 import { BillingPanel } from './BillingPanel';
+import { useBaseCurrency } from '@/features/sales/deposits';
 import { NewReturnDialog } from './ReturnsPages';
 import { AttachmentPanel } from '@/components/dms/AttachmentPanel';
 import { FromSalesOrderDialog } from '@/features/projects/from-sales-order-dialog';
@@ -156,6 +157,7 @@ export function SalesOrderPage() {
   const action = useSalesMutation(salesApi.orderAction);
   const close = useSalesMutation(salesApi.closeShort);
   const keep = useSalesMutation(salesApi.keepCredit);
+  const creditRest = useSalesMutation(salesApi.creditUndelivered);
   const del = useSalesMutation(salesApi.deleteOrder);
 
   const doSave = (then?: () => void) => {
@@ -217,6 +219,13 @@ export function SalesOrderPage() {
     if (!o) return;
     const reason = await ask({ title: tx('Keep as customer credit'), description: tx('The open credit of this sale stays on the customer\'s account for later invoices, and the sale is settled.'), label: tx('Reason'), confirmLabel: tx('Keep credit') });
     if (reason) keep.mutate({ id: o.id, reason }, { onSuccess: () => toast.success(tx('Credit kept on the customer\'s account')), onError: (e) => toast.error(apiErrorMessage(e, tx('Action failed'))) });
+  };
+  // ADR-S094 C2b: goods invoiced but not delivered are owed to the customer: credited (quantity credit notes against the
+  // invoices that billed them) before the line closes short
+  const creditUndelivered = async (lineId: string, qty: number) => {
+    if (!o) return;
+    const reason = await ask({ title: tx('Credit undelivered'), description: tx('Credit notes are posted for the {{qty}} invoiced but not delivered, against the invoices that billed them, and the line is closed short.', { qty }), label: tx('Reason'), confirmLabel: tx('Credit and close') });
+    if (reason) creditRest.mutate({ id: o.id, lineId, reason }, { onSuccess: () => toast.success(tx('Undelivered quantity credited; line closed short')), onError: (e) => toast.error(apiErrorMessage(e, tx('Action failed'))) });
   };
   const ribbon = [tx('Quotation'), tx('Sales order'), tx('Delivered'), tx('Invoiced')];
   const step = !o ? 1 : o.invoiceStatus === 'invoiced' ? 3 : o.deliveryStatus === 'full' ? 2 : 1;
@@ -384,6 +393,7 @@ export function SalesOrderPage() {
                       <LineSizeFields productId={l.productId} variantId={l.variantId} value={l.size} disabled={!editable}
                         onChange={(size, q) => patchLine(i, { size, ...(q !== null ? { quantity: q } : {}) })} />
                       {l.closedShort && <span className="mt-1 block text-[11px]">{tx('Closed short')}: {l.closeShortReason}</span>}
+                      {!editable && n(l.qtyDeferred) > 0 && <span className="mt-1 block text-[11px] text-amber-700">{tx('Invoiced, not delivered')}: {n(l.qtyDeferred)}</span>}
                     </td>
                     {show('description') && <td className="py-1.5 pr-2"><Input disabled={!editable} value={l.description} onChange={(e) => patchLine(i, { description: e.target.value })} /></td>}
                     <td className="py-1.5 pr-2"><OrderQtyInput productId={l.productId} size={l.size} disabled={!editable} value={l.quantity} onChange={(q) => patchLine(i, { quantity: q })} /></td>
@@ -408,8 +418,11 @@ export function SalesOrderPage() {
                     <td className="py-1.5 pr-2 pt-3 text-right tabular-nums">{money(l.lineSubtotal ?? n(l.quantity) * n(l.unitPrice) * (1 - n(l.discountPercent) / 100), currency)}</td>
                     <td className="py-1.5 pt-2">
                       {editable && <button className="rounded p-1 text-muted-foreground hover:bg-muted" onClick={() => { setLines((ls) => ls.filter((_, j) => j !== i)); setDirty(true); }}><Trash2 className="h-4 w-4" /></button>}
-                      {!editable && open && !l.closedShort && n(l.qty?.remaining) > 0 && has(P.orderCloseShort) && (
+                      {!editable && open && !l.closedShort && n(l.qty?.remaining) > 0 && n(l.qtyDeferred) <= 0 && has(P.orderCloseShort) && (
                         <button title={tx('Close short')} className="rounded p-1 text-muted-foreground hover:bg-muted" onClick={() => { setCloseLine(l.id!); setReason(''); setDialog('close'); }}><Scissors className="h-4 w-4" /></button>
+                      )}
+                      {!editable && open && !l.closedShort && n(l.qtyDeferred) > 0 && has(P.orderCloseShort) && has(P.creditNoteWrite) && (
+                        <button title={tx('Credit undelivered')} disabled={creditRest.isPending} className="rounded p-1 text-muted-foreground hover:bg-muted" onClick={() => creditUndelivered(l.id!, n(l.qtyDeferred))}><FileMinus className="h-4 w-4" /></button>
                       )}
                     </td>
                   </tr>
@@ -509,6 +522,7 @@ export function SalesOrderPage() {
 /** ADR-S094 §4.4: what the sale invoiced, credited, received and still owes (or is owed), from its posted documents. */
 function OutcomeSection({ order: o, currency, onKeepCredit, busy }: { order: SalesOrder; currency?: string; onKeepCredit?: () => void; busy: boolean }) {
   const amt = (v?: number) => money(Number(v ?? 0), currency);
+  const base = useBaseCurrency();
   const outstanding = Number(o.amountOutstanding ?? 0);
   return (
     <TabSection title={tx('Payment')}>
@@ -522,6 +536,8 @@ function OutcomeSection({ order: o, currency, onKeepCredit, busy }: { order: Sal
         {Number(o.amountRefunded ?? 0) !== 0 && <Row label={tx('Refunded')} value={amt(o.amountRefunded)} />}
         {Number(o.amountRetainedAsCredit ?? 0) !== 0 && <Row label={tx('Kept as customer credit')} value={amt(o.amountRetainedAsCredit)} />}
         {Number(o.advanceHeld ?? 0) !== 0 && <Row label={tx('Advance held')} value={amt(o.advanceHeld)} />}
+        {/* ADR-S094 C2b: revenue of goods invoiced but not dispatched yet, in the functional currency */}
+        {Number(o.revenueDeferred ?? 0) !== 0 && <Row label={tx('Revenue deferred until delivery')} value={money(Number(o.revenueDeferred), base || undefined)} />}
         <div className="border-t pt-1"><Row label={outstanding < 0 ? tx('Owed to the customer') : tx('Outstanding')} value={<strong>{amt(Math.abs(outstanding))}</strong>} /></div>
         {onKeepCredit && <Button size="sm" variant="outline" className="mt-2" disabled={busy} onClick={onKeepCredit}>{tx('Keep as customer credit')}</Button>}
       </div>

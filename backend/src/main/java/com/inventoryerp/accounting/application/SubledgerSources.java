@@ -239,6 +239,14 @@ public class SubledgerSources {
             "reverse the overhead run", "POST /projects/overhead-runs/{id}/reverse", null);
     static final Kind REVENUE_RECOGNITION = process("revenue_recognition", "revenue recognition run", null, null,
             "reverse the revenue run", "POST /projects/revenue-runs/{id}/reverse", null);
+    // ADR-S094 C2b: revenue of goods invoiced before dispatch, held as a contract liability and released as they leave.
+    // The entries follow the order's deliveries and invoices: the next change of either posts the difference.
+    static final Kind SALES_REVENUE_DEFERRAL = process("sales_revenue_deferral", "sales revenue deferral", "SalesOrder",
+            "number", "deliver the goods (the dispatch releases it), cancel the invoice or credit the undelivered quantity",
+            "POST /sales/orders/{id}/lines/{lineId}/credit-undelivered", "/sales/orders/{id}");
+    static final Kind SALES_REVENUE_RELEASE = process("sales_revenue_release", "sales revenue release", "SalesOrder",
+            "number", "return the goods on their trip (the bring-back defers the revenue again)",
+            "POST /fleet/trips/{id}/return", "/sales/orders/{id}");
     static final Kind PROJECT_CAPITALISATION = process("project_capitalisation", "project capitalisation", null, null,
             "reverse the capitalisation", "POST /projects/capitalisations/{id}/reverse", null);
     static final Kind PROJECT_TIMESHEET = processByNumber("project_timesheet", "project timesheet batch", null, null,
@@ -295,6 +303,8 @@ public class SubledgerSources {
             Map.entry("project_timesheet", PROJECT_TIMESHEET),
             Map.entry("project_overhead", PROJECT_OVERHEAD),
             Map.entry("revenue_recognition", REVENUE_RECOGNITION),
+            Map.entry("sales_revenue_deferral", SALES_REVENUE_DEFERRAL),
+            Map.entry("sales_revenue_release", SALES_REVENUE_RELEASE),
             Map.entry("project_capitalisation", PROJECT_CAPITALISATION),
             Map.entry("production_order", PRODUCTION_ORDER),
             Map.entry("production_variance", PRODUCTION_VARIANCE),

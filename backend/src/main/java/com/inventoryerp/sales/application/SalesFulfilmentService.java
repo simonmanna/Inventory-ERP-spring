@@ -73,8 +73,9 @@ public class SalesFulfilmentService {
      */
     @Transactional
     public List<Map<String, Object>> rebuild(String orderId) {
-        // IPR LK-3: the sales order first, then its lines (the order every sales route uses: order → delivery order →
-        // trip → order lines), so this subscriber and a sales delivery route on the same order cannot deadlock.
+        // Lock order (IPR LK-3, ADR-S094 C2b): the sales order first, then its lines (order → delivery order → trip →
+        // order lines, as every sales route takes them). A rebuild also runs as a fleet event reaction; this keeps it and
+        // a sales delivery route on the same order from deadlocking, and its status refresh needs the sale anyway.
         Map<String, Object> o = db.row("SELECT * FROM \"SalesOrder\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE",
                 orderId, org());
         if (o == null) {
@@ -132,6 +133,10 @@ public class SalesFulfilmentService {
             }
         }
         if (!changed.isEmpty()) {
+            // ADR-S094 C2b: a fleet change that reached sales by its event only (no source hook) moves the deferral
+            if (deferrals != null) {
+                deferrals.resync(orderId, "fulfilment");
+            }
             orders.refreshStatus(orderId);
             atp.followOrder(orderId);
         }
@@ -299,6 +304,13 @@ public class SalesFulfilmentService {
     }
 
     private org.springframework.transaction.support.TransactionTemplate perOrder;
+
+    private SalesRevenueDeferralService deferrals;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setDeferrals(SalesRevenueDeferralService deferrals) {
+        this.deferrals = deferrals;
+    }
 
     @org.springframework.beans.factory.annotation.Autowired
     void setTransactions(org.springframework.transaction.PlatformTransactionManager txm) {
