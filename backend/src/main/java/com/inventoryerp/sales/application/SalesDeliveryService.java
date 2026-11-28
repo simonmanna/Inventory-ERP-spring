@@ -481,8 +481,13 @@ public class SalesDeliveryService {
      * line. Without lines, everything still open. A line quantity of 0 is skipped; more than remains is refused.
      */
     @Transactional
-    @SuppressWarnings("unchecked")
     public Map<String, Object> create(String orderId, Map<String, Object> in) {
+        return create(orderId, in, false);
+    }
+
+    /** {@code counter}: the counter pickup of a cash sale (ADR-S094 OD-1: no delivery-posting approval, no QC). */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> create(String orderId, Map<String, Object> in, boolean counter) {
         Map<String, Object> o = orders.require(orderId);
         // One planner per order at a time: two first deliveries must not open two delivery orders and plan twice.
         db.row("SELECT pg_advisory_xact_lock(hashtext(?))::text AS locked", "sales-delivery:" + orderId);
@@ -564,15 +569,48 @@ public class SalesDeliveryService {
         if (!blank(str(in.get("locationId")))) {
             dispatch.update(id, new TripPatch(null, str(in.get("locationId")), null, null, null));
         }
-        boolean approval = Boolean.TRUE.equals(settings.settings().get("deliveryPostingApproval"));
+        boolean approval = !counter && Boolean.TRUE.equals(settings.settings().get("deliveryPostingApproval"));
         db.update("UPDATE \"FleetLoad\" SET carrier = 'manual', \"transporterPlate\" = ?, \"transporterDriverName\" = ?, \"manualGross\" = ?,"
                 + " \"manualTare\" = ?, \"approvalRequired\" = ?, \"rescheduledFromId\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?"
                 + " AND \"organizationId\" = ?", plate, driver, gross, tare, approval, rescheduledFrom, id, org());
         writeLogistics(id, logistics);
         audit.record(AuditInput.of("FleetLoad", id, "create", null, Obj.of("orderId", orderId, "plate", plate, "net", net,
                 "method", method, "plannedDate", planned.toString(), "rescheduledFromId", rescheduledFrom)));
-        qcSync(id);
+        if (!counter) {
+            qcSync(id);
+        }
         return get(id);
+    }
+
+    /**
+     * ADR-S094 C3 (§5.2 S4–S6, §5.3): the counter pickup of a cash sale, inside its confirm transaction. One customer
+     * collection from {@code locationId} carries every open line in full; it is issued (the stock leaves, with the
+     * serial numbers handed over per sale line) and its proof of delivery records who received the goods. A counter
+     * pickup needs no delivery-posting approval and no delivery QC (OD-1); dispatch passes the prepaid sale through the
+     * credit gate (OD-6). The weighbridge rule still applies. Returns the delivered load.
+     */
+    Map<String, Object> pickup(String orderId, String locationId, Map<String, List<String>> serialsByLine,
+            String receivedBy, String receiverPhone, String signature, String notes) {
+        Map<String, Object> load = create(orderId, Obj.of("deliveryMethod", "customer_collect", "locationId", locationId,
+                "notes", notes), true);
+        String id = str(load.get("id"));
+        String linesSql = "SELECT l.id, l.\"dispatchedQty\", dl.\"sourceLineId\" FROM \"FleetLoadLine\" l JOIN"
+                + " \"FleetDeliveryOrderLine\" dl ON dl.id = l.\"deliveryOrderLineId\" WHERE l.\"loadId\" = ? AND"
+                + " l.\"organizationId\" = ? ORDER BY l.id";
+        List<Map<String, Object>> issueLines = new ArrayList<>();
+        for (Map<String, Object> l : db.rows(linesSql, id, org())) {
+            List<String> serials = serialsByLine.get(str(l.get("sourceLineId")));
+            if (serials != null && !serials.isEmpty()) {
+                issueLines.add(Obj.of("loadLineId", l.get("id"), "serialNumbers", serials));
+            }
+        }
+        issue(id, Obj.of("lines", issueLines), true);
+        List<Map<String, Object>> pod = new ArrayList<>();
+        for (Map<String, Object> l : db.rows(linesSql, id, org())) {
+            pod.add(Obj.of("loadLineId", l.get("id"), "deliveredQty", dec(l.get("dispatchedQty"))));
+        }
+        return confirm(id, Obj.of("lines", pod, "receiverName", receivedBy, "receiverPhone", receiverPhone, "signature",
+                signature, "notes", notes));
     }
 
     private static boolean plateOptional(String method) {
@@ -884,8 +922,11 @@ public class SalesDeliveryService {
      * {@code lines: [{loadLineId, serialNumbers: [...]}]}, recorded on the trip lines and passed to the stock issue.
      */
     @Transactional
-    @SuppressWarnings("unchecked")
     public Map<String, Object> issue(String id, Map<String, Object> in) {
+        return issue(id, in, false);
+    }
+
+    private Map<String, Object> issue(String id, Map<String, Object> in, boolean counter) {
         Map<String, Object> t = require(id);
         orders.lock(str(t.get("orderId"))); // plan §8: sales order → delivery order → trip → order lines
         if (in != null && in.get("lines") instanceof List<?> given && !given.isEmpty()) {
@@ -901,7 +942,7 @@ public class SalesDeliveryService {
         }
         // Approval and blocking quality checks run in beforeDispatch, from every dispatch route (R4d, DEL-4).
         dispatch.dispatch(id, null);
-        if (qcGate != null) {
+        if (qcGate != null && !counter) {
             qcGate.onCompleted(qcDoc(id).at(null));
         }
         fulfilment.rebuild(str(t.get("orderId")));

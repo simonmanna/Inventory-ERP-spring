@@ -95,6 +95,17 @@ public class SalesOrderService {
     void setSizing(ProductSizingService sizing) {
         this.sizing = sizing;
     }
+
+    private SalesCashSaleService cashSales;
+    private BranchSalesProfileService profiles;
+
+    /** ADR-S094 C3: the cash type's tenders, confirm and timeline, and the branch profiles cash sales are drafted from. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setCashSales(@org.springframework.context.annotation.Lazy SalesCashSaleService cashSales,
+            BranchSalesProfileService profiles) {
+        this.cashSales = cashSales;
+        this.profiles = profiles;
+    }
     private SalesOutcomeService outcome;
     /** ADR-S094 §4.4: the financial outcome, refreshed with the derived statuses. */
     @org.springframework.beans.factory.annotation.Autowired
@@ -170,7 +181,7 @@ public class SalesOrderService {
                 params.addAll(st);
             }
         }
-        for (String k : List.of("partnerId", "ownerId", "quotationId", "branchId")) {
+        for (String k : List.of("partnerId", "ownerId", "quotationId", "branchId", "saleType")) {
             if (!blank(p.get(k))) {
                 where.append(" AND o.\"").append(k).append("\" = ?");
                 params.add(p.get(k));
@@ -244,6 +255,12 @@ public class SalesOrderService {
         if (now != null) {
             o.putAll(now.json());
         }
+        if ("cash".equals(o.get("saleType"))) {
+            // ADR-S094 C3: tender lines and what is still to collect (failed lines are left out)
+            o.put("payments", cashSales.tenders(id));
+            o.put("balanceDue", JsNumbers.js("draft".equals(o.get("status")) ? dec(o.get("total")).subtract(
+                    cashSales.captured(id)).max(BigDecimal.ZERO) : BigDecimal.ZERO));
+        }
         o.put("actions", actions(o));
         return o;
     }
@@ -262,7 +279,11 @@ public class SalesOrderService {
             return out;
         }
         String approval = str(o.get("approvalStatus"));
-        if (Set.of("required", "rejected").contains(approval) && TenantContext.has(Permissions.SALES__ORDER_WRITE)) {
+        boolean cash = "cash".equals(o.get("saleType"));
+        String write = cash ? Permissions.SALES__CASH_SALE_SUBMIT : Permissions.SALES__ORDER_WRITE;
+        String approve = cash ? Permissions.SALES__CASH_SALE_APPROVE : Permissions.SALES__ORDER_APPROVE;
+        String confirm = cash ? Permissions.SALES__CASH_SALE_CONFIRM : Permissions.SALES__ORDER_CONFIRM;
+        if (Set.of("required", "rejected").contains(approval) && TenantContext.has(write)) {
             out.add("submit_approval");
         }
         if ("pending".equals(approval)) {
@@ -270,14 +291,17 @@ public class SalesOrderService {
                     Permissions.SALES__CONFIGURE))) {
                 out.add("withdraw_approval");
             }
-            if (TenantContext.has(Permissions.SALES__ORDER_APPROVE) && selfApprovalProblem(o) == null) {
+            if (TenantContext.has(approve) && selfApprovalProblem(o) == null) {
                 out.add("approve");
             }
-            if (TenantContext.has(Permissions.SALES__ORDER_APPROVE)) {
+            if (TenantContext.has(approve)) {
                 out.add("reject");
             }
         }
-        if (Set.of("not_required", "approved").contains(approval) && TenantContext.has(Permissions.SALES__ORDER_CONFIRM)) {
+        if (cash && TenantContext.has(Permissions.SALES__CASH_SALE_CREATE)) {
+            out.add("add_payment");
+        }
+        if (Set.of("not_required", "approved").contains(approval) && TenantContext.has(confirm)) {
             out.add("confirm");
         }
         return out;
@@ -362,14 +386,28 @@ public class SalesOrderService {
     /** New draft order (direct order flow). */
     @Transactional
     public Map<String, Object> create(Map<String, Object> in) {
+        boolean cash = "cash".equals(saleType(in));
+        // ADR-S094 C3: a cash sale is drafted at a branch from its active sales profile (walk-in customer by default)
+        Map<String, Object> profile = cash ? profiles.forBranch(access.documentBranch(blank(str(in.get("branchId")))
+                ? null : str(in.get("branchId")))) : null;
         String partnerId = str(in.get("partnerId"));
+        if (cash && blank(partnerId)) {
+            partnerId = str(profile.get("walkInPartnerId"));
+            if (blank(partnerId)) {
+                throw ApiException.badRequest("partnerId should not be empty (the branch has no walk-in customer)");
+            }
+        }
         if (blank(partnerId)) {
             throw ApiException.badRequest("partnerId should not be empty");
         }
         requirePartner(partnerId);
         Map<String, Object> header = header(in, true);
         customerDefaults(header, partnerId);
-        header.put("branchId", access.documentBranch(str(header.get("branchId"))));
+        if (cash) {
+            cashHeader(in, header, profile, partnerId, true);
+        } else {
+            header.put("branchId", access.documentBranch(str(header.get("branchId"))));
+        }
         header.put("partnerId", partnerId);
         if (header.get("agreementId") == null) {
             String project = engine.projectAgreement(partnerId, str(header.get("siteId")), LocalDate.now(BusinessZone.get()));
@@ -378,7 +416,8 @@ public class SalesOrderService {
             }
         }
         agreement(header, partnerId);
-        header.put("number", nextNumber(str(header.get("branchId"))));
+        header.put("number", cash ? nextCashNumber(str(header.get("branchId")), str(profile.get("numberPrefix")))
+                : nextNumber(str(header.get("branchId"))));
         header.putIfAbsent("currencyCode", orgCurrency());
         header.putIfAbsent("ownerId", user());
         header.put("createdById", user());
@@ -388,7 +427,77 @@ public class SalesOrderService {
                 str(header.get("locationId")), PriceScope.of(header));
         evaluateApproval(id);
         audit.record(AuditInput.of("SalesOrder", id, "create", null, Obj.of("number", row.get("number"))));
+        if (cash) {
+            cashSales.event(id, "create", null, "draft", null, null);
+        }
         return get(id);
+    }
+
+    /** ADR-S094 C3: the requested sale type of a new sale ({@code order} when not given). */
+    public static String saleType(Map<String, Object> in) {
+        String type = in == null || blank(str(in.get("saleType"))) ? "order" : str(in.get("saleType"));
+        if (!Set.of("order", "cash").contains(type)) {
+            throw ApiException.badRequest("saleType must be one of: cash, order");
+        }
+        return type;
+    }
+
+    /**
+     * ADR-S094 C3: the sales routes accept the order or the cash-sale permissions; a cash sale needs
+     * {@code cashPermission} and an order {@code orderPermission} (403 otherwise, as the route guard words it).
+     */
+    public static void requireType(String saleType, String orderPermission, String cashPermission) {
+        String need = "cash".equals(saleType) ? cashPermission : orderPermission;
+        if (!TenantContext.has(need)) {
+            throw ApiException.forbidden("Missing required permission(s): " + need);
+        }
+    }
+
+    /** {@link #requireType} for an existing sale the caller can see. */
+    @Transactional(readOnly = true)
+    public void requireFor(String id, String orderPermission, String cashPermission) {
+        requireType(str(require(id).get("saleType")), orderPermission, cashPermission);
+    }
+
+    /**
+     * ADR-S094 C3 (§5, I7): the fixed header of a cash sale — its branch, profile and location, immediate payment,
+     * counter pickup, the organization currency — and the buyer's identity: a named customer's own, unless typed in;
+     * the walk-in customer's as typed in.
+     */
+    private void cashHeader(Map<String, Object> in, Map<String, Object> d, Map<String, Object> profile, String partnerId,
+            boolean create) {
+        if (in.containsKey("currencyCode") && !blank(str(in.get("currencyCode")))
+                && !orgCurrency().equals(str(in.get("currencyCode")))) {
+            throw ApiException.badRequest("Cash sales are recorded in the organization currency");
+        }
+        if (create) {
+            d.put("saleType", "cash");
+            d.put("branchId", profile.get("branchId"));
+            d.put("profileId", profile.get("id"));
+            d.put("currencyCode", orgCurrency());
+            d.put("saleDate", LocalDate.now(BusinessZone.get()));
+        } else {
+            d.remove("branchId");
+            d.remove("currencyCode");
+        }
+        d.put("locationId", profile.get("locationId"));
+        d.put("paymentMode", "cash");
+        d.put("deliveryMethod", "collect");
+        d.put("paymentTermId", null);
+        d.remove("exchangeRate");
+        if (partnerId != null) {
+            boolean walkIn = partnerId.equals(str(profile.get("walkInPartnerId")));
+            Map<String, Object> p = db.row("SELECT name, phone, \"taxNumber\" FROM \"Partner\" WHERE id = ? AND"
+                    + " \"organizationId\" = ?", partnerId, org());
+            d.put("customerName", walkIn || p == null ? null : p.get("name"));
+            d.put("customerPhone", walkIn || p == null ? null : p.get("phone"));
+            d.put("customerTin", walkIn || p == null ? null : p.get("taxNumber"));
+        }
+        for (String k : List.of("customerName", "customerPhone", "customerTin", "customerAddress")) {
+            if (in.containsKey(k)) {
+                d.put(k, blank(str(in.get(k))) ? null : str(in.get(k)).trim());
+            }
+        }
     }
 
     /**
@@ -465,14 +574,29 @@ public class SalesOrderService {
         }
         in = new LinkedHashMap<>(in);
         in.remove("version");
+        boolean cash = "cash".equals(o.get("saleType"));
+        if (in.containsKey("saleType") && !java.util.Objects.equals(saleType(in), str(o.get("saleType")))) {
+            throw ApiException.badRequest("The type of a sale cannot change");
+        }
+        if (cash && in.containsKey("branchId") && !blank(str(in.get("branchId")))
+                && !java.util.Objects.equals(str(in.get("branchId")), str(o.get("branchId")))) {
+            throw ApiException.badRequest("The branch of a cash sale cannot change");
+        }
         Map<String, Object> d = header(in, false);
-        if (d.containsKey("branchId")) {
+        if (d.containsKey("branchId") && !cash) {
             d.put("branchId", access.documentBranch(str(d.get("branchId"))));
         }
         if (in.containsKey("partnerId")) {
             String p = str(in.get("partnerId"));
+            if (cash && blank(p)) {
+                p = str(profiles.get(str(o.get("profileId"))).get("walkInPartnerId"));
+            }
             requirePartner(p);
             d.put("partnerId", p);
+        }
+        if (cash) {
+            cashHeader(in, d, profiles.get(str(o.get("profileId"))), d.containsKey("partnerId") ? str(d.get("partnerId"))
+                    : null, false);
         }
         if (d.containsKey("agreementId") || d.containsKey("partnerId") && o.get("agreementId") != null) {
             if (!d.containsKey("agreementId")) {
@@ -505,6 +629,9 @@ public class SalesOrderService {
         closeCreditRequests(id, "Order deleted");
         withdrawEngineRequest(o, "Order deleted");
         audit.record(AuditInput.of("SalesOrder", id, "delete"));
+        if ("cash".equals(o.get("saleType"))) {
+            cashSales.event(id, "discard", "draft", "deleted", null, null);
+        }
         return Obj.of("ok", true);
     }
 
@@ -938,6 +1065,29 @@ public class SalesOrderService {
      */
     @Transactional
     public Map<String, Object> confirm(String id) {
+        Map<String, Object> o = confirmable(id);
+        if ("cash".equals(o.get("saleType"))) {
+            throw ApiException.badRequest("A cash sale is confirmed with its handover");
+        }
+        return finishConfirm(id);
+    }
+
+    /**
+     * ADR-S094 C3: the confirm route. An order needs {@code sales:order:confirm}; a cash sale needs
+     * {@code sales:cash_sale:confirm} and is confirmed with its handover ({@link SalesCashSaleService#confirm}).
+     */
+    @Transactional
+    public Map<String, Object> confirm(String id, Map<String, Object> in) {
+        Map<String, Object> o = require(id);
+        requireType(str(o.get("saleType")), Permissions.SALES__ORDER_CONFIRM, Permissions.SALES__CASH_SALE_CONFIRM);
+        return "cash".equals(o.get("saleType")) ? cashSales.confirm(id, in) : confirm(id);
+    }
+
+    /**
+     * The locked draft, once the checks every confirm runs pass: a live customer, at least one line, the stock policy
+     * and the approval condition (ADR-S094 §4.2).
+     */
+    Map<String, Object> confirmable(String id) {
         Map<String, Object> o = lock(id);
         if (!"draft".equals(o.get("status"))) {
             throw ApiException.badRequest("Only draft orders can be confirmed");
@@ -962,7 +1112,26 @@ public class SalesOrderService {
         if (!Set.of("not_required", "approved").contains(approval.status())) {
             throw ApiException.badRequest("This sale needs approval: submit it for approval first");
         }
-        return finishConfirm(id);
+        return o;
+    }
+
+    /**
+     * ADR-S094 C3 (§5.2 S3): the cash sale turns confirmed inside its confirm transaction, dated today. No reservation
+     * (the goods leave now) and no credit hold (the prepaid decision {@code creditDecisionId} was recorded).
+     */
+    void markCashConfirmed(Map<String, Object> o, String creditDecisionId) {
+        String id = str(o.get("id"));
+        Map<String, Object> d = Obj.of("status", "confirmed", "confirmedAt", Instant.now(), "confirmedById", user(),
+                "approvalReasons", List.of(), "version", ((Number) o.get("version")).intValue() + 1, "saleDate",
+                LocalDate.now(BusinessZone.get()));
+        if (!Set.of("not_required", "approved").contains(o.get("approvalStatus"))) {
+            d.put("approvalStatus", "not_required");
+        }
+        db.patch("SalesOrder", id, d, true);
+        audit.record(AuditInput.of("SalesOrder", id, "approve", null, Obj.of("status", "confirmed", "creditDecision",
+                creditDecisionId)));
+        snapshots.record("sales_order", id);
+        publish(DomainEvents.SALES_ORDER_CONFIRMED, id, Map.of());
     }
 
     // ------------------------------------------------------------------ approval (ADR-S094 §4.2)
@@ -1648,6 +1817,12 @@ public class SalesOrderService {
                 : sequence.next("sales_order:" + code + ":" + year, "SO-" + code + "-" + year + "-", 5);
     }
 
+    /** ADR-S094 §1: a cash sale is numbered on its branch's cash-sale counter, CSS-&lt;prefix&gt;-&lt;year&gt;-nnnnn. */
+    String nextCashNumber(String branchId, String prefix) {
+        int year = LocalDate.now(BusinessZone.get()).getYear();
+        return sequence.next("css:" + branchId + ":" + year, "CSS-" + prefix + "-" + year + "-", 5);
+    }
+
     private String branchCode(String branchId) {
         if (branchId == null || !"branch".equals(settings.settings().get("numberingScope"))) {
             return null;
@@ -1662,12 +1837,50 @@ public class SalesOrderService {
             return; // scheduled work has no user and is not limited to one
         }
         access.filterDocument(where, params, "o");
-        if (TenantContext.has(Permissions.SALES__ORDER_READ_ALL)) {
+        boolean orderRead = TenantContext.has(Permissions.SALES__ORDER_READ);
+        boolean cashRead = TenantContext.has(Permissions.SALES__CASH_SALE_READ);
+        if (!orderRead && !cashRead) {
+            // a caller holding neither (an event subscriber, a document of another module): the owner rule, as before
+            if (TenantContext.has(Permissions.SALES__ORDER_READ_ALL)) {
+                return;
+            }
+            where.append(" AND (o.\"ownerId\" = ? OR o.\"createdById\" = ? OR o.\"ownerId\" IS NULL)");
+            params.add(user());
+            params.add(user());
             return;
         }
-        where.append(" AND (o.\"ownerId\" = ? OR o.\"createdById\" = ? OR o.\"ownerId\" IS NULL)");
-        params.add(user());
-        params.add(user());
+        // ADR-S094 C3: orders follow the order permissions, cash sales the cash-sale ones
+        StringBuilder cond = new StringBuilder(" AND (");
+        if (orderRead) {
+            cond.append("(o.\"saleType\" = 'order'");
+            if (!TenantContext.has(Permissions.SALES__ORDER_READ_ALL)) {
+                cond.append(" AND (o.\"ownerId\" = ? OR o.\"createdById\" = ? OR o.\"ownerId\" IS NULL)");
+                params.add(user());
+                params.add(user());
+            }
+            cond.append(')');
+        } else {
+            cond.append("false");
+        }
+        cond.append(" OR ");
+        if (cashRead) {
+            cond.append("(o.\"saleType\" = 'cash'");
+            if (!TenantContext.has(Permissions.SALES__CASH_SALE_READ_ALL)) {
+                // the legacy cash-sale rule: a branch's users see its cash sales, else the creator sees their own
+                String branch = access.activeBranch();
+                if (branch != null) {
+                    cond.append(" AND (o.\"branchId\" = ? OR o.\"createdById\" = ?)");
+                    params.add(branch);
+                } else {
+                    cond.append(" AND o.\"createdById\" = ?");
+                }
+                params.add(user());
+            }
+            cond.append(')');
+        } else {
+            cond.append("false");
+        }
+        where.append(cond).append(')');
     }
 
     public Map<String, Object> require(String id) {

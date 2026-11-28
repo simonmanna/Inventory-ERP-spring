@@ -59,6 +59,15 @@ public interface DeliverySourcePort {
      */
     default void deliveryChanged(String sourceId, String loadId, Instant at) {}
 
+    /**
+     * ADR-S094 OD-6: the source was paid in full before its goods leave (a cash sale at the counter), so it adds no
+     * credit exposure: dispatch records a prepaid pass instead of the {@code trip_dispatch} credit check, and a credit
+     * hold does not stop the goods. Default: not prepaid.
+     */
+    default boolean prepaid(String sourceId) {
+        return false;
+    }
+
     record Source(String number, String partnerId, String branchId, String locationId, String siteId,
             LocalDate requestedDate, List<SourceLine> lines) {}
 

@@ -333,18 +333,7 @@ class SalesApprovalIT extends ApiTestSupport {
         assertThat(by(rep, 200, "POST", path(o) + "/confirm", null).get("status").asString()).isEqualTo("confirmed");
     }
 
-    @Test
-    @DisplayName("AP-8: a cash sale is never confirmed by its approval")
-    void cashSaleNeverAutoConfirms() {
-        JsonNode o = order(rep, 10);
-        tenant(() -> jdbc.sql("UPDATE \"SalesOrder\" SET \"saleType\" = 'cash', \"paymentMode\" = 'cash' WHERE id = ?")
-                .param(o.get("id").asString()).update());
-        by(rep, 200, "POST", path(o) + "/submit-approval", null);
-        JsonNode approved = by(checker, 200, "POST", path(o) + "/approve", Map.of());
-        assertThat(approved.get("status").asString()).isEqualTo("draft");
-        assertThat(approved.get("approvalStatus").asString()).isEqualTo("approved");
-        assertThat(by(rep, 200, "POST", path(o) + "/confirm", null).get("status").asString()).isEqualTo("confirmed");
-    }
+    // AP-8 (a cash sale is never confirmed by its approval) runs on a real cash sale in SalesCashSaleIT (ADR-S094 C3).
 
     @Test
     @DisplayName("AP-9: when the confirm after an approval is refused, the approval stands and the refusal is returned")

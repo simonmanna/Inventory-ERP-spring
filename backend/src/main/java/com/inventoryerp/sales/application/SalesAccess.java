@@ -66,6 +66,12 @@ public class SalesAccess {
         return stamped != null && !stamped.isEmpty() ? stamped : branches.branchFilter();
     }
 
+    /** The user's working branch (the branch filter they work under), or null. */
+    public String activeBranch() {
+        String b = branches.branchFilter();
+        return b == null || b.isEmpty() ? null : b;
+    }
+
     /** Adds the branch condition of a document with owner and creator columns under {@code alias}. */
     public void filterDocument(StringBuilder where, List<Object> params, String alias) {
         DataScope s = scope();

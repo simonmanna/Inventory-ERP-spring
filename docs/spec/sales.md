@@ -337,6 +337,32 @@ branch scope.
     be restocked. A refund defaults to the tender of the original receipt.
   - A claim without goods (write-off) needs `sales:return:write_off` and an approver other than the requester.
   - `POST /sales/credit-notes` refuses type `return` against a sale invoice: returned goods go through a sales return.
+- **The branch cash sale is a Sale of type `cash`** (ADR-S094 C3a, V735; AD-1, AD-5, AD-6, AD-7, AD-8, OD-1, OD-6,
+  OD-8 and OD-9 approved 2026-11-28). The flow is in ADR-S094 §5, under "As built (C3a)".
+  - `POST /sales/orders` with `saleType: cash` drafts at the branch's profile. Tenders go through
+    `POST /sales/orders/:id/payments` (verify, delete). `POST /sales/orders/:id/confirm` with `{handover}` runs the
+    whole sale in one transaction: counter pickup, invoice, one receipt per tender, fiscal outbox. The sale ends
+    `done`.
+  - Each generic order route accepts the order permission or the cash-sale one; the sale's type decides (403
+    otherwise). A user without `sales:cash_sale:read` does not see cash sales, and one without `sales:order:read`
+    does not see orders.
+  - New routes, not in Nest:
+    - `/sales/orders/:id/payments`, `/payments/:paymentId`, `/payments/:paymentId/verify`;
+    - `/sales/orders/:id/events`, `/fiscal`, `/fiscal/retry`;
+    - `/sales/orders/payment-modes`.
+  - Postings: P4 + P8 + P11 only, with no 1215 / 2216 / deposit entries.
+  - The invoice is posted as a system step: the confirm runs that one workflow call with `invoice:post` added to the
+    caller's own context.
+  - Limitations:
+    - The prepaid credit decision is `pass` with a prepaid reason.
+    - The weighbridge rule still applies at the counter.
+    - The sale date is the day of the confirm.
+    - Receipts carry no cash session.
+    - Mobile money is verified by hand.
+    - Negative stock follows the inventory policy.
+    - Order-type invoices are fiscalised from C4.
+    - The cash Reverse comes in C3b.
+    - The legacy `/sales/cash-sales` flow is unchanged until it is retired.
 - **Revenue invoiced before the goods leave is deferred** (ADR-S094 C2b, V734; AD-2 = contract liability, AD-16 =
   release at dispatch, approved 2026-11-28).
   - A posted invoice that bills more than has been dispatched moves the revenue of the difference to the contract

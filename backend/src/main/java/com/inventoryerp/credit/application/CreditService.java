@@ -334,6 +334,25 @@ public class CreditService {
         return new Decision(id, "override", List.of(), e);
     }
 
+    /** ADR-S094 OD-6: the reason a prepaid counter sale passes a check point without evaluation. */
+    public static final String PREPAID = "Prepaid at the counter (cash sale): no credit exposure";
+
+    /**
+     * ADR-S094 OD-6: a cash sale paid in full at the counter adds no exposure, so a customer on credit hold or blocked
+     * may still buy for cash. The check point is not evaluated; it records a pass with the {@link #PREPAID} reason, in
+     * the caller's transaction.
+     */
+    @Transactional
+    public Decision prepaid(String checkpoint, String partnerId, String documentType, String documentId,
+            String documentNumber, BigDecimal amount) {
+        if (!CHECKPOINTS.contains(checkpoint)) {
+            throw ApiException.badRequest("Unknown credit check point: " + checkpoint);
+        }
+        String id = record(partnerId, checkpoint, documentType, documentId, documentNumber, amount, BigDecimal.ZERO,
+                "pass", List.of(PREPAID), Map.of(), null);
+        return new Decision(id, "pass", List.of(PREPAID), Map.of());
+    }
+
     private String record(String partnerId, String checkpoint, String documentType, String documentId,
             String documentNumber, BigDecimal amount, BigDecimal limit, String result, List<String> reasons,
             Map<String, Object> exposure, String overrides) {

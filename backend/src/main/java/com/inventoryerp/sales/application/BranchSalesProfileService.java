@@ -181,7 +181,30 @@ public class BranchSalesProfileService {
         }
     }
 
+    /**
+     * ADR-S094 C3: what a cash Sale needs from its profile at confirm — the branch, an active stock location of it and
+     * the walk-in customer. Each tender's account is checked with the tender; no accrual mappings are needed (the sale
+     * is invoiced at the counter).
+     */
+    public void requireValidForSale(Map<String, Object> p) {
+        List<String> problems = baseProblems(p);
+        if (!problems.isEmpty()) {
+            throw ApiException.badRequest("Branch sales profile is not valid: " + String.join("; ", problems));
+        }
+    }
+
     private List<String> problems(Map<String, Object> p) {
+        List<String> out = baseProblems(p);
+        List<Tender> tenders = new ArrayList<>();
+        tenders.add(new Tender("cash account", "cash", str(p.get("cashAccountId"))));
+        tenders.add(new Tender("MTN mobile money account", "mobile_money", str(p.get("momoMtnAccountId"))));
+        tenders.add(new Tender("Airtel mobile money account", "mobile_money", str(p.get("momoAirtelAccountId"))));
+        tenders.add(new Tender("bank clearing account", "bank", str(p.get("bankClearingAccountId"))));
+        out.addAll(recognition.accountProblems(tenders));
+        return out;
+    }
+
+    private List<String> baseProblems(Map<String, Object> p) {
         List<String> out = new ArrayList<>();
         String branchId = str(p.get("branchId"));
         if (db.count("SELECT count(*) FROM \"Branch\" WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL",
@@ -196,12 +219,6 @@ public class BranchSalesProfileService {
                 + " \"organizationId\" = ? AND \"deletedAt\" IS NULL", List.of(str(p.get("walkInPartnerId")), org())) == 0) {
             out.add("walk-in customer not found");
         }
-        List<Tender> tenders = new ArrayList<>();
-        tenders.add(new Tender("cash account", "cash", str(p.get("cashAccountId"))));
-        tenders.add(new Tender("MTN mobile money account", "mobile_money", str(p.get("momoMtnAccountId"))));
-        tenders.add(new Tender("Airtel mobile money account", "mobile_money", str(p.get("momoAirtelAccountId"))));
-        tenders.add(new Tender("bank clearing account", "bank", str(p.get("bankClearingAccountId"))));
-        out.addAll(recognition.accountProblems(tenders));
         return out;
     }
 

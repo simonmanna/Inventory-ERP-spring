@@ -856,6 +856,111 @@ C0 records the findings; the TP tests prove them before any C3 code.
   pending"; an alert is raised after N minutes.
 - **Tests**: the mock adapter gains timeout, duplicate and lookup behaviour (FR-1…FR-5).
 
+**As built (C3a, V735; AD-1, AD-5, AD-6, AD-7, AD-8, OD-1, OD-6, OD-8 and OD-9 approved 2026-11-28 with the
+recommended options)**:
+- **Routes.** Everything stays on `/sales/orders`; the legacy `/sales/cash-sales` routes are unchanged.
+  - Each generic route accepts the order permission **or** the cash-sale one. The sale's type then decides, with the
+    route guard's 403 text: "Missing required permission(s): <permission>".
+    - list, detail, revisions, timeline: `sales:order:read` | `sales:cash_sale:read`;
+    - create, edit, delete: `sales:order:write` | `sales:cash_sale:create`;
+    - confirm: `sales:order:confirm` | `sales:cash_sale:confirm`;
+    - submit / withdraw approval: `sales:order:write` | `sales:cash_sale:submit`;
+    - approve / reject: `sales:order:approve` | `sales:cash_sale:approve`.
+  - The type check is in the controller, not in `SalesOrderService`. Approval, credit approval, sync, returns and the
+    demo seeds call the service directly and must keep working.
+  - New routes:
+    - `POST /:id/payments` (201, `sales:cash_sale:create`) and `DELETE /:id/payments/:paymentId`;
+    - `POST /:id/payments/:paymentId/verify` (`sales:cash_sale:verify_payment` | `sales:cash_sale:confirm`);
+    - `GET /:id/events` (the timeline);
+    - `GET /:id/fiscal` and `POST /:id/fiscal/retry`;
+    - `GET /sales/orders/payment-modes`.
+  - The list takes a `saleType` filter. The confirm of a cash sale takes `{handover}`.
+- **Visibility.**
+  - Orders follow the order permissions, as before: own, or `read_all`.
+  - Cash sales follow the legacy cash-sale rule: `sales:cash_sale:read_all`; otherwise the user's working branch
+    (`User.defaultBranchId`) or their own sales.
+  - A caller holding neither read permission (an event subscriber, the portal, a quote link) keeps the old owner rule.
+- **Draft (§1, I7).** `saleType: cash` drafts at the caller's branch (`SalesAccess.documentBranch`), from its active
+  profile:
+  - profile, profile location, immediate payment, `collect`, organization currency ("Cash sales are recorded in the
+    organization currency"), today's sale date;
+  - number `CSS-<prefix>-<year>-nnnnn` on the existing counter `css:<branch>:<year>`;
+  - the walk-in customer by default. A named customer's name, phone and tax number are copied unless typed in.
+  - The type and the branch of a sale never change.
+- **Tenders (§5.1)**, in `SalesOrderPayment`:
+  - Methods: cash, mobile money (`mtn` | `airtel`), bank, card.
+  - The account comes from the payment mode or the profile; card uses the `card_clearing` mapping. An account sent by
+    the client is refused as an unknown field.
+  - Physical cash may carry `amountTendered`. The change is recorded and never posted.
+  - The captured total (failed lines excluded) never exceeds the sale total. OD-9: excess money is refused.
+  - A non-cash line needs a reference. The reference is unique per organization, method and provider while the line
+    has not failed (409).
+  - The collector's capture verifies the line, unless the profile requires segregation of duties. Then:
+    - a verifier verifies, and cash may also be verified by a confirmer, but never the collector;
+    - at confirm, each verifier must differ from both the collector and the confirmer.
+- **Confirm T1 (§5.2)**: one transaction, in this order.
+  1. The checks every confirm runs (`confirmable`): draft, live customer, lines, stock policy, approval.
+  2. The profile is valid for a sale: branch, an active location of that branch, walk-in customer.
+  3. The handover (§5.3): `affirmed`, `receivedByName`; optional lines, each in full, with serials.
+  4. The tenders: none pending, Σ verified = total, segregation, every tender account valid.
+  5. The line accounts.
+  6. `CreditService.prepaid("order_confirm")` (OD-6).
+  7. Confirmed, with no reservation.
+  8. The counter pickup, a `customer_collect` load from the profile's location: stock issue with serials, then the
+     POD with receiver, phone, signature and notes. Delivery-posting approval and delivery QC are skipped (OD-1). The
+     trip-dispatch credit gate and the credit-hold check are replaced by a prepaid decision.
+  9. The invoice from the sale (regular), posted as a system step.
+  10. One receipt per verified tender, allocated to the invoice.
+  11. `recomputeInvoiced` and `refreshStatus`: the sale is **done** (delivered, invoiced, paid, settled).
+  12. The fiscal outbox row `so:<sale>:issue:<n>`. Provider `none` completes it inline.
+  13. The timeline and the idempotency outcome.
+- **Journals (AD-6, AD-7).**
+  - P4 at the load: Dr COGS / Cr inventory.
+  - P8 at the invoice: Dr AR / Cr revenue, Cr VAT.
+  - P11 per tender: Dr tender / Cr AR.
+  - Nothing is booked on unbilled receivables (1215), 2216 or customer deposits.
+  - The invoice takes its number from the organization's single gap-free series.
+- **AD-8.** One walk-in customer per branch profile. `requireTaxNumberAbove` is met by the sale's `customerTin` (the
+  buyer's tax number on a walk-in sale) or by the customer's own tax number.
+- **Invoice post as a system step.**
+  - The invoice workflow checks `invoice:post` against the caller.
+  - The confirm runs that one call with the caller's own context (same user and organization) plus `invoice:post`.
+    The quote link and the portal use the same pattern with a scoped permission set.
+  - `sales:cash_sale:confirm` authorizes the whole confirm.
+- **Fiscal.**
+  - A `FiscalDocument` belongs to a submission or to a sale: `salesOrderId`, exactly one of the two.
+  - At most one live operation per sale and kind.
+  - `SalesOrder.fiscalStatus`: none / pending / issued / failed / cancellation_pending / cancelled.
+  - `CashSaleFiscalService.requestForSale` / `retryForSale` / `forSale`.
+- **Evidence.** `SalesCashSaleIT` (11 tests, all through the HTTP API):
+  - F1 with exact journals per customer.
+  - TP-1: every row the confirm wrote carries one `xmin`, so one transaction wrote them all.
+  - PM-1/2/3/4/5/6/8, PH-1/2/3, AP-8 and authorization.
+  - FI-1/5/6/8/9 (load, invoice journal, second allocation, fiscal row, timeline row), each by a trigger installed as
+    the schema owner:
+    - full rollback; the gap-free counter is unchanged;
+    - a non-transactional sequence proves each fault fired;
+    - the last request, retried with its key, then runs once.
+  - CC-3: two confirms of one sale, one wins.
+  - CC-5: six parallel confirms take contiguous invoice numbers.
+  - CC-7.
+- **Deviations and limits** (also in `docs/spec/sales.md`):
+  - The prepaid credit decision is stored as `pass` with the reason "Prepaid at the counter (cash sale): no credit
+    exposure". The `CreditDecision` check allows only pass / hold / blocked / override.
+  - The weighbridge rule still applies at a pickup. Goods that must be weighed are sold as an order-type sale.
+  - The sale date is the business day of the confirm. No backdating.
+  - Receipts are not linked to a cash session. The drawer reconciles through the tender account.
+  - The mobile-money gateway is not wired to tenders. Mobile money is verified by hand, with its reference.
+  - Negative stock follows the inventory policy, as every stock issue does. A confirm above stock on hand is refused
+    only where negative stock is off (the legacy cash-sale rule).
+  - Order-type invoices are fiscalised from C4.
+  - `SalesOrderEvent` is written for cash sales only.
+  - Tender-reference uniqueness does not check the legacy `SalesSubmissionPayment` table.
+  - **C3b** brings the cash Reverse (§7.4), the fiscal gate for a sale's reversal, and TP-3 / TP-4 / RC / FR / RV.
+  - No web change. Nothing in the web creates a cash-type sale yet; the screens move in C6.
+  - AP-8 moved from `SalesApprovalIT` to `SalesCashSaleIT`. A cash sale now needs its branch profile
+    (`SalesOrder_cash_profile_check`), so the old SQL-faked one is refused.
+
 ---
 
 ## 6. Idempotency lease and fencing (kernel, every money route)

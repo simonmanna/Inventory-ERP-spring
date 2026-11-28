@@ -36,8 +36,14 @@ class SalesDispatchGate implements DispatchGate {
         if (!"sales_order".equals(sourceType)) {
             return;
         }
-        Map<String, Object> t = db.row("SELECT \"approvalRequired\", \"approvedAt\" FROM \"FleetLoad\" WHERE id = ? AND"
-                + " \"organizationId\" = ?", tripId, org());
+        Map<String, Object> t = db.row("SELECT t.\"approvalRequired\", t.\"approvedAt\", o.\"saleType\" FROM \"FleetLoad\" t"
+                + " JOIN \"FleetDeliveryOrder\" d ON d.id = t.\"deliveryOrderId\" LEFT JOIN \"SalesOrder\" o ON o.id ="
+                + " d.\"sourceId\" AND d.\"sourceType\" = 'sales_order' WHERE t.id = ? AND t.\"organizationId\" = ?", tripId,
+                org());
+        if (t != null && "cash".equals(t.get("saleType"))) {
+            // ADR-S094 OD-1: the counter pickup of a cash sale needs neither delivery-posting approval nor delivery QC
+            return;
+        }
         if (t != null && Boolean.TRUE.equals(t.get("approvalRequired")) && t.get("approvedAt") == null) {
             throw ApiException.badRequest("This delivery is waiting for approval");
         }

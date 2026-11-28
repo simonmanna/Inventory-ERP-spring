@@ -1085,14 +1085,21 @@ public class FleetDispatchService {
         Map<String, Object> order = k.order();
         String code = (String) t.get("code");
         TripStatusPolicy.assertMove(code, (String) t.get("status"), "dispatched");
+        boolean prepaid = false;
         if ("sales_order".equals(order.get("sourceType"))) {
             DeliverySourcePort port = orders.sourcePort("sales_order", (String) order.get("sourceId"));
             if (port != null) {
                 port.assertDeliverable((String) order.get("sourceId"));
                 assertWithinSource(port, id, code);
+                prepaid = port.prepaid((String) order.get("sourceId"));
             }
         }
-        creditGate(order, t);
+        if (prepaid) {
+            // ADR-S094 OD-6: paid in full at the counter — no exposure to check, a credit hold does not stop the goods
+            credit.prepaid("trip_dispatch", (String) order.get("partnerId"), "fleet_trip", id, code, BigDecimal.ZERO);
+        } else {
+            creditGate(order, t);
+        }
         if (t.get("stockIssuedAt") != null) {
             throw ApiException.conflict("Trip " + code + " already issued its stock");
         }
@@ -1104,7 +1111,7 @@ public class FleetDispatchService {
         recheckOwn(t);
         Instant now = at;
         boolean moveStock = "dispatch".equals(order.get("stockMode"));
-        if (moveStock) {
+        if (moveStock && !prepaid) {
             creditControl.assertNotOnHold((String) order.get("partnerId"));
         }
         BigDecimal tonnes = BigDecimal.ZERO;
