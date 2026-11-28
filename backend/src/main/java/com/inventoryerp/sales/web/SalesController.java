@@ -291,6 +291,14 @@ public final class SalesController {
             return svc.withdrawApproval(id, text(b, "reason"));
         }
 
+        /** ADR-S094 §4.4: keep the sale's open credit on the customer's account; the sale is settled. */
+        @PostMapping("/{id}/keep-credit")
+        @RequirePermissions(Permissions.SALES__CREDIT_NOTE_WRITE)
+        public Map<String, Object> keepCredit(@PathVariable String id,
+                @RequestBody(required = false) Map<String, Object> b) {
+            return svc.keepCredit(id, text(b, "reason"));
+        }
+
         @PostMapping("/{id}/approve")
         @Idempotent(required = true)
         @RequirePermissions(Permissions.SALES__ORDER_APPROVE)

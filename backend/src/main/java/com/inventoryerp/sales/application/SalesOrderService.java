@@ -95,6 +95,12 @@ public class SalesOrderService {
     void setSizing(ProductSizingService sizing) {
         this.sizing = sizing;
     }
+    private SalesOutcomeService outcome;
+    /** ADR-S094 §4.4: the financial outcome, refreshed with the derived statuses. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setOutcome(SalesOutcomeService outcome) {
+        this.outcome = outcome;
+    }
     private SalesAgreementService agreements;
     private SalesAccess access;
     private SalesAlerts alerts;
@@ -147,6 +153,14 @@ public class SalesOrderService {
             List<String> st = List.of(p.get("approvalStatus").split(","));
             where.append(" AND o.\"approvalStatus\" IN (").append(SalesDb.marks(st.size())).append(')');
             params.addAll(st);
+        }
+        // ADR-S094 §4.4: payment and settlement outcome
+        for (String f : List.of("paymentStatus", "settlementStatus")) {
+            if (!blank(p.get(f))) {
+                List<String> st = List.of(p.get(f).split(","));
+                where.append(" AND o.\"").append(f).append("\" IN (").append(SalesDb.marks(st.size())).append(')');
+                params.addAll(st);
+            }
         }
         for (String k : List.of("partnerId", "ownerId", "quotationId", "branchId")) {
             if (!blank(p.get(k))) {
@@ -211,6 +225,12 @@ public class SalesOrderService {
                 o.put("approvalReasons", a.reasons());
             }
         }
+        // ADR-S094 §4.4: the outcome as the posted documents stand now (the stored copy follows events and the
+        // nightly reconciliation)
+        SalesOutcomeService.Outcome now = outcome.compute(id);
+        if (now != null) {
+            o.putAll(now.json());
+        }
         o.put("actions", actions(o));
         return o;
     }
@@ -222,6 +242,10 @@ public class SalesOrderService {
     private List<String> actions(Map<String, Object> o) {
         List<String> out = new ArrayList<>();
         if (!"draft".equals(o.get("status"))) {
+            if (o.get("openCredit") instanceof Number n && n.doubleValue() > 0
+                    && TenantContext.has(Permissions.SALES__CREDIT_NOTE_WRITE)) {
+                out.add("keep_credit");
+            }
             return out;
         }
         String approval = str(o.get("approvalStatus"));
@@ -1486,43 +1510,97 @@ public class SalesOrderService {
     }
 
     /**
-     * Derive delivery / invoice status and move {@code confirmed → done} from the line quantities (called whenever a
-     * projection changes). ADR-S094 §4.1: progress lives in deliveryStatus / invoiceStatus, not in the status.
+     * Derive delivery / invoice status, the financial outcome, and move {@code confirmed → done} (called whenever a
+     * projection, a document or a payment of the order changes). ADR-S094 §4.5: done = everything delivered (or closed
+     * short), every line invoiced exactly as far as it is billable (B − N = 0), no return awaiting its outcome and no
+     * advance held; a cash sale must also be settled. Payment does not hold an order back (§4.4 settlement does).
      */
     @Transactional
     public void refreshStatus(String id) {
         // Sales readiness R4 (SO-6): under the order lock, so concurrent fleet / invoice subscribers serialise and the
         // order turns done (and announces it) exactly once.
-        Map<String, Object> o = db.row("SELECT status FROM \"SalesOrder\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE",
-                id, org());
-        if (o == null || !OPEN.contains(o.get("status"))) {
+        Map<String, Object> o = db.row("SELECT status, \"saleType\" FROM \"SalesOrder\" WHERE id = ? AND"
+                + " \"organizationId\" = ? FOR UPDATE", id, org());
+        if (o == null) {
             return;
         }
-        Map<String, Object> s = db.row("SELECT COALESCE(sum(quantity - \"qtyCancelled\"), 0) AS open,"
-                + " COALESCE(sum(\"qtyDelivered\"), 0) AS delivered, COALESCE(sum(\"qtyBillable\"), 0) AS billable,"
-                + " COALESCE(sum(\"qtyInvoiced\" - \"qtyCredited\"), 0) AS invoiced, bool_and(\"qtyDelivered\" >="
-                + " (quantity - \"qtyCancelled\") * (1 - \"tolerancePct\" / 100)) AS alldelivered FROM \"SalesOrderLine\""
-                + " WHERE \"orderId\" = ?", id);
-        BigDecimal delivered = dec(s.get("delivered"));
-        BigDecimal billable = dec(s.get("billable"));
-        BigDecimal invoiced = dec(s.get("invoiced"));
-        boolean allDelivered = Boolean.TRUE.equals(s.get("alldelivered"));
-        String delivery = delivered.signum() == 0 && !allDelivered ? "none" : allDelivered ? "full" : "partial";
-        String invoice = invoiced.signum() == 0 ? billable.signum() > 0 ? "to_invoice" : "nothing"
-                : invoiced.compareTo(billable) >= 0 && allDelivered ? "invoiced" : "partial";
-        // SO-7: an order closed short on every line before anything left has nothing to deliver or bill: it is done.
-        boolean nothingLeft = dec(s.get("open")).signum() == 0 && invoiced.signum() == 0 && billable.signum() == 0;
-        String status = allDelivered && ("invoiced".equals(invoice) || nothingLeft) ? "done" : str(o.get("status"));
-        Map<String, Object> d = Obj.of("deliveryStatus", delivery, "invoiceStatus", invoice, "status", status);
-        if ("done".equals(status)) {
-            d.put("doneAt", Instant.now());
-            d.put("onHold", false);
+        SalesOutcomeService.Outcome money = outcome.compute(id);
+        Map<String, Object> d = new LinkedHashMap<>();
+        boolean open = OPEN.contains(o.get("status"));
+        String status = str(o.get("status"));
+        if (open) {
+            Map<String, Object> s = db.row("SELECT COALESCE(sum(l.quantity - l.\"qtyCancelled\"), 0) AS open,"
+                    + " COALESCE(sum(l.\"qtyDelivered\"), 0) AS delivered, COALESCE(sum(" + BILLABLE + "), 0) AS billable,"
+                    + " COALESCE(sum(l.\"qtyInvoiced\" - l.\"qtyCredited\"), 0) AS invoiced, bool_and(l.\"qtyDelivered\" >="
+                    + " (l.quantity - l.\"qtyCancelled\") * (1 - l.\"tolerancePct\" / 100)) AS alldelivered, bool_and(("
+                    + BILLABLE + ") = l.\"qtyInvoiced\" - l.\"qtyCredited\") AS balanced FROM \"SalesOrderLine\" l JOIN"
+                    + " \"SalesOrder\" o ON o.id = l.\"orderId\" LEFT JOIN \"Product\" p ON p.id = l.\"productId\""
+                    + " WHERE l.\"orderId\" = ?", id);
+            BigDecimal delivered = dec(s.get("delivered"));
+            BigDecimal billable = dec(s.get("billable"));
+            BigDecimal invoiced = dec(s.get("invoiced"));
+            boolean allDelivered = Boolean.TRUE.equals(s.get("alldelivered"));
+            String delivery = delivered.signum() == 0 && !allDelivered ? "none" : allDelivered ? "full" : "partial";
+            String invoice = invoiced.signum() == 0 ? billable.signum() > 0 ? "to_invoice" : "nothing"
+                    : invoiced.compareTo(billable) >= 0 && allDelivered ? "invoiced" : "partial";
+            long openReturns = db.count("SELECT count(*) FROM \"SalesReturn\" WHERE \"orderId\" = ? AND"
+                    + " \"organizationId\" = ? AND status IN ('requested', 'approved', 'received', 'inspected')",
+                    List.of(id, org()));
+            // dispatched goods are billed on what the customer accepts: a load still awaiting its proof of delivery
+            // keeps the order open (its billable quantity is not known yet)
+            long awaitingPod = db.count("SELECT count(*) FROM \"FleetLoad\" t JOIN \"FleetDeliveryOrder\" d ON d.id ="
+                    + " t.\"deliveryOrderId\" WHERE d.\"organizationId\" = ? AND d.\"sourceType\" = 'sales_order' AND"
+                    + " d.\"sourceId\" = ? AND t.status IN ('dispatched', 'in_transit')", List.of(org(), id));
+            boolean done = allDelivered && Boolean.TRUE.equals(s.get("balanced")) && openReturns == 0 && awaitingPod == 0
+                    && money.advanceHeld().signum() == 0 && (!"cash".equals(o.get("saleType")) || money.settled());
+            d.put("deliveryStatus", delivery);
+            d.put("invoiceStatus", invoice);
+            if (done) {
+                status = "done";
+                d.put("status", status);
+                d.put("doneAt", Instant.now());
+                d.put("onHold", false);
+            }
+            db.patch("SalesOrder", id, d, true);
         }
-        db.patch("SalesOrder", id, d, true);
-        if ("done".equals(status)) {
+        // stored after the status change: a done order with nothing invoiced charged nothing
+        outcome.refresh(id);
+        if ("done".equals(status) && open) {
             publish(DomainEvents.SALES_ORDER_DONE, id, Map.of());
             atp.releaseOrder(id);
         }
+    }
+
+    /**
+     * ADR-S094 §4.5 B per order line (aliases {@code l} line, {@code o} order, {@code p} product): what the line may be
+     * invoiced for in total. Zero-value lines are never invoiced (AD-19: delivery note only); the ordered policy bills
+     * ordered − closed short − returned and credited − written off; the delivered policy bills the billable quantity
+     * (which already excludes those).
+     */
+    static final String BILLABLE = "CASE WHEN l.\"lineTotal\" = 0 THEN 0 WHEN COALESCE(o.\"billingPolicy\","
+            + " p.\"invoicePolicy\", 'delivered') = 'ordered' THEN GREATEST(l.quantity - l.\"qtyCancelled\""
+            + " - l.\"qtyReturnCredited\" - l.\"qtyWrittenOff\", 0) ELSE l.\"qtyBillable\" END";
+
+    /**
+     * ADR-S094 §4.4: keep the sale's open credit on the customer's account (explicit, permission
+     * {@code sales:credit_note:write}, audited). The credit notes stay open for other invoices; the sale is settled.
+     */
+    @Transactional
+    public Map<String, Object> keepCredit(String id, String reason) {
+        Map<String, Object> o = lock(id);
+        if (blank(reason)) {
+            throw ApiException.badRequest("reason should not be empty");
+        }
+        SalesOutcomeService.Outcome c = outcome.compute(id);
+        if (c == null || c.openCredit().signum() <= 0) {
+            throw ApiException.badRequest("This sale has no open credit to keep");
+        }
+        db.patch("SalesOrder", id, Obj.of("creditKept", dec(o.get("creditKept")).add(c.openCredit()), "version",
+                ((Number) o.get("version")).intValue() + 1), true);
+        audit.record(AuditInput.of("SalesOrder", id, "update", null, Obj.of("creditKept", JsNumbers.js(c.openCredit()),
+                "reason", reason)));
+        refreshStatus(id);
+        return get(id);
     }
 
     // ------------------------------------------------------------------ helpers

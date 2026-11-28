@@ -25,8 +25,8 @@ All values in the limit currency at the organization rate; gross (incl. tax).
 
 | Bucket | Definition | Sign |
 |---|---|---|
-| U — undelivered | Σ confirmed SO lines (ordered − cancelled − billable) × unit gross price; held orders count (still commitments); cancelled / done excluded | + |
-| B — delivered, uninvoiced | Σ (billable − gross invoiced + credited-for-rebill) × unit gross price | + |
+| U — undelivered | Σ confirmed SO lines (ordered − cancelled − max(billable + returned and credited + written off, gross invoiced)) × unit gross price; held orders count (still commitments); cancelled / done excluded. Goods returned and credited or written off are settled, not undelivered (ADR-S094 C2) | + |
+| B — delivered, uninvoiced | Σ (billable − gross invoiced + credited) × unit gross price, never below 0 (ADR-S094 C2: credited quantities are subtracted, as the spec always said) | + |
 | A — AR open | Σ residual of posted invoices (incl. down-payment invoices) | + |
 | D — unapplied deposits | Σ `customer_deposit` liability per partner not yet applied | − |
 | C — unapplied credits | Σ unallocated payments / posted credit notes not applied | − |

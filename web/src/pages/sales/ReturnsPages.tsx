@@ -22,7 +22,18 @@ import { AttachmentPanel } from '@/components/dms/AttachmentPanel';
 import { HeaderSelect, useHeaderOptions } from './OrderHeaderFields';
 import { useAsk } from '@/components/ask-dialog';
 
-interface ReturnLine { id: string; orderLineId: string; description: string; quantity: number; receivedQty: number; disposition: string | null; creditQty: number | null; inspectionNotes: string | null }
+interface ReturnLine {
+  id: string; orderLineId: string; description: string; quantity: number; receivedQty: number; disposition: string | null; creditQty: number | null; inspectionNotes: string | null;
+  /** ADR-S094 §7.2: the delivery the goods come back from, the serial numbers that came back and the condition found. */
+  loadLineId?: string | null; loadCode?: string | null; serialNumbers?: string[] | null; serialTracking?: boolean | null; condition?: string | null;
+}
+/** What an order line can still come back from, per delivery (GET /sales/returns/returnable). */
+interface Returnable {
+  orderLineId: string; description: string; serialTracking: boolean; returnable: number;
+  deliveries: Array<{ loadLineId: string; loadCode: string; deliveredAt: string | null; delivered: number; returnable: number; serialNumbers: string[] }>;
+}
+const CONDITIONS: Record<string, string> = { usable: tx('Usable'), damaged: tx('Damaged'), defective: tx('Defective') };
+const serialList = (v?: string) => (v ?? '').split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean);
 interface SalesReturn {
   id: string; number: string; orderId: string; orderNumber: string; partnerName: string; status: string; reason: string; physicalReturn: boolean;
   outcome: string | null; creditNoteId: string | null; refundPaymentId: string | null; replacementOrderId: string | null; createdAt: string; lines?: ReturnLine[];
@@ -71,7 +82,8 @@ export function ReturnDetailPage() {
   const has = useAuthStore((s) => s.hasPermission);
   const { data: r } = useQuery({ queryKey: ['sales', 'return', id], queryFn: async () => (await api.get<SalesReturn>(`/sales/returns/${id}`)).data, enabled: !!id });
   const options = useHeaderOptions();
-  const [disp, setDisp] = useState<Record<string, { disposition: string; locationId?: string; rejectedQty?: number; rejectReason?: string }>>({});
+  const [disp, setDisp] = useState<Record<string, { disposition: string; locationId?: string; rejectedQty?: number; rejectReason?: string; condition?: string }>>({});
+  const [recv, setRecv] = useState<Record<string, { receivedQty?: number; serials?: string }>>({});
   const [outcome, setOutcome] = useState('credit_note');
   const act = useMutation({
     mutationFn: async ({ action, body }: { action: string; body?: Record<string, unknown> }) =>
@@ -94,7 +106,9 @@ export function ReturnDetailPage() {
       <div className="flex flex-wrap gap-2">
         {r.status === 'requested' && canApprove && <Button onClick={() => act.mutate({ action: 'approve' })}>{tx('Approve')}</Button>}
         {['requested', 'approved'].includes(r.status) && canApprove && <Button variant="outline" onClick={async () => { const reason = await ask({ title: `${tx('Reject')} ${r.number}?`, label: tx('Reason'), confirmLabel: tx('Reject'), destructive: true }); if (reason) act.mutate({ action: 'reject', body: { reason } }); }}>{tx('Reject')}</Button>}
-        {r.status === 'approved' && r.physicalReturn && canWrite && <Button onClick={() => act.mutate({ action: 'receive' })}>{tx('Receive goods')}</Button>}
+        {r.status === 'approved' && r.physicalReturn && canWrite && <Button onClick={() => act.mutate({ action: 'receive', body: { lines: (r.lines ?? []).map((l) => ({
+          lineId: l.id, ...(recv[l.id]?.receivedQty != null ? { receivedQty: recv[l.id]?.receivedQty } : {}), serialNumbers: serialList(recv[l.id]?.serials),
+        })) } })}>{tx('Receive goods')}</Button>}
         {/* Every line is sent with the disposition its select shows ("Restock" until changed, the server's own default). */}
         {r.status === 'received' && canWrite && <Button onClick={() => act.mutate({ action: 'inspect', body: { lines: (r.lines ?? []).map((l) => ({ lineId: l.id, ...disp[l.id], disposition: disp[l.id]?.disposition ?? 'restock' })) } })}>{tx('Record inspection')}</Button>}
         {closable && canApprove && <>
@@ -110,20 +124,32 @@ export function ReturnDetailPage() {
         {r.creditNoteId && <button className="text-primary hover:underline" onClick={() => navigate(`/credit-notes/${r.creditNoteId}`)}>{tx('Credit note')}</button>}
         {r.replacementOrderId && <button className="ml-3 text-primary hover:underline" onClick={() => navigate(`/sales/orders/${r.replacementOrderId}`)}>{tx('Replacement order')}</button>}
         <table className="mt-3 w-full text-sm">
-          <thead className="text-left text-xs text-muted-foreground"><tr><th>{tx('Line')}</th><th className="text-right">{tx('Claimed')}</th><th className="text-right">{tx('Received')}</th><th>{tx('Disposition')}</th><th className="text-right">{tx('Credited')}</th></tr></thead>
+          <thead className="text-left text-xs text-muted-foreground"><tr><th>{tx('Line')}</th><th>{tx('Delivery')}</th><th className="text-right">{tx('Claimed')}</th><th className="text-right">{tx('Received')}</th><th>{tx('Disposition')}</th><th className="text-right">{tx('Credited')}</th></tr></thead>
           <tbody>
             {(r.lines ?? []).map((l) => (
               <tr key={l.id} className="border-t">
-                <td className="py-1">{l.description}</td><td className="py-1 text-right">{Number(l.quantity)}</td><td className="py-1 text-right">{Number(l.receivedQty)}</td>
+                <td className="py-1">{l.description}{(l.serialNumbers?.length ?? 0) > 0 && <div className="text-xs text-muted-foreground">{tx('Serials')}: {l.serialNumbers!.join(', ')}</div>}</td>
+                <td className="py-1">{l.loadCode ?? '—'}</td>
+                <td className="py-1 text-right">{Number(l.quantity)}</td>
+                <td className="py-1 text-right">{r.status === 'approved' && r.physicalReturn && canWrite ? (
+                  <div className="flex flex-col items-end gap-1">
+                    <Input aria-label={tx('Received quantity')} className="h-8 w-20" type="number" min={0} max={Number(l.quantity)} placeholder={String(Number(l.quantity))}
+                      onChange={(e) => setRecv({ ...recv, [l.id]: { ...recv[l.id], receivedQty: e.target.value === '' ? undefined : Number(e.target.value) } })} />
+                    {l.serialTracking && <Input aria-label={tx('Serial numbers that came back')} className="h-8 w-56" placeholder={tx('Serial numbers, comma separated')}
+                      onChange={(e) => setRecv({ ...recv, [l.id]: { ...recv[l.id], serials: e.target.value } })} />}
+                  </div>) : Number(l.receivedQty)}</td>
                 <td className="py-1">{r.status === 'received' ? (
                   <div className="flex gap-1">
                     <select className="h-8 rounded border bg-background px-1" value={disp[l.id]?.disposition ?? 'restock'} onChange={(e) => setDisp({ ...disp, [l.id]: { ...disp[l.id], disposition: e.target.value } })}>
                       <option value="restock">{tx('Restock')}</option><option value="quarantine">{tx('Quarantine')}</option><option value="damaged">{tx('Damaged')}</option><option value="scrap">{tx('Scrap')}</option>
                     </select>
+                    <select aria-label={tx('Condition')} className="h-8 rounded border bg-background px-1" value={disp[l.id]?.condition ?? ''} onChange={(e) => setDisp({ ...disp, [l.id]: { ...disp[l.id], disposition: disp[l.id]?.disposition ?? 'restock', condition: e.target.value || undefined } })}>
+                      <option value="">{tx('Condition…')}</option>{Object.entries(CONDITIONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                    </select>
                     {['quarantine', 'damaged'].includes(disp[l.id]?.disposition ?? '') && <HeaderSelect value={disp[l.id]?.locationId ?? ''} options={options.locations} none={tx('Location…')} onChange={(locationId) => setDisp({ ...disp, [l.id]: { ...disp[l.id], locationId } })} />}
                     <Input aria-label={tx('Rejected quantity')} title={tx('Rejected quantity: refused, goes back to the customer, no credit')} className="h-8 w-20" type="number" min={0} placeholder={tx('Reject')} onChange={(e) => setDisp({ ...disp, [l.id]: { ...disp[l.id], disposition: disp[l.id]?.disposition ?? 'restock', rejectedQty: Number(e.target.value) } })} />
                     {Number(disp[l.id]?.rejectedQty ?? 0) > 0 && <Input className="h-8 w-40" placeholder={tx('Why rejected')} onChange={(e) => setDisp({ ...disp, [l.id]: { ...disp[l.id], rejectReason: e.target.value } })} />}
-                  </div>) : l.disposition ?? '—'}</td>
+                  </div>) : <>{l.disposition ?? '—'}{l.condition && <span className="ml-1 text-xs text-muted-foreground">({CONDITIONS[l.condition] ?? l.condition})</span>}</>}</td>
                 <td className="py-1 text-right">{l.creditQty == null ? '—' : Number(l.creditQty)}</td>
               </tr>
             ))}
@@ -138,12 +164,20 @@ export function ReturnDetailPage() {
 /** Start a return from a sales order. */
 export function NewReturnDialog({ order, onClose }: { order: SalesOrder; onClose: () => void }) {
   const navigate = useNavigate();
+  const canWriteOff = useAuthStore((s) => s.hasPermission(PERMISSIONS.sales.returnWriteOff));
   const [reason, setReason] = useState('damaged');
   const [physical, setPhysical] = useState(true);
   const [qty, setQty] = useState<Record<string, number>>({});
+  const [from, setFrom] = useState<Record<string, string>>({});
+  const { data: returnable } = useQuery({
+    queryKey: ['sales', 'returnable', order.id],
+    queryFn: async () => (await api.get<Returnable[]>('/sales/returns/returnable', { params: { orderId: order.id } })).data,
+  });
   const create = useMutation({
     mutationFn: async () => (await api.post<SalesReturn>('/sales/returns', {
-      orderId: order.id, reason, physicalReturn: physical, lines: Object.entries(qty).filter(([, q]) => q > 0).map(([orderLineId, quantity]) => ({ orderLineId, quantity })),
+      orderId: order.id, reason, physicalReturn: physical, lines: Object.entries(qty).filter(([, q]) => q > 0).map(([orderLineId, quantity]) => ({
+        orderLineId, quantity, ...(physical && from[orderLineId] ? { loadLineId: from[orderLineId] } : {}),
+      })),
     })).data,
     onSuccess: (r) => navigate(`/sales/returns/${r.id}`), onError: (e) => toast.error(apiErrorMessage(e, tx('Could not create the return'))),
   });
@@ -153,10 +187,24 @@ export function NewReturnDialog({ order, onClose }: { order: SalesOrder; onClose
         <DialogHeader><DialogTitle>{tx('New return')} — {order.number}</DialogTitle></DialogHeader>
         <Field label={tx('Reason')}><select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={reason} onChange={(e) => setReason(e.target.value)}>
           {Object.entries(REASONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={physical} onChange={(e) => setPhysical(e.target.checked)} />{tx('Goods come back')}</label>
-        {(order.lines ?? []).map((l) => (
-          <Field key={l.id} label={`${l.description} (${tx('delivered')} ${Number(l.qty?.delivered ?? 0)})`}><Input type="number" min={0} value={qty[l.id!] ?? 0} onChange={(e) => setQty({ ...qty, [l.id!]: Number(e.target.value) })} /></Field>
-        ))}
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={physical} disabled={physical && !canWriteOff} onChange={(e) => setPhysical(e.target.checked)} />{tx('Goods come back')}</label>
+        {!physical && <p className="text-xs text-muted-foreground">{tx('A claim without goods credits what the customer keeps or lost (a write-off). Someone else approves it.')}</p>}
+        {(returnable ?? []).map((l) => {
+          const open = l.deliveries.filter((d) => d.returnable > 0);
+          return (
+            <Field key={l.orderLineId} label={`${l.description} (${tx('can come back')} ${Number(l.returnable)})`}>
+              <div className="flex gap-2">
+                <Input type="number" min={0} max={Number(l.returnable)} value={qty[l.orderLineId] ?? 0} onChange={(e) => setQty({ ...qty, [l.orderLineId]: Number(e.target.value) })} />
+                {physical && open.length > 1 && (
+                  <select aria-label={tx('Delivery')} className="h-9 rounded-md border bg-background px-2 text-sm" value={from[l.orderLineId] ?? ''} onChange={(e) => setFrom({ ...from, [l.orderLineId]: e.target.value })}>
+                    <option value="">{tx('From delivery…')}</option>
+                    {open.map((d) => <option key={d.loadLineId} value={d.loadLineId}>{d.loadCode}{d.deliveredAt ? ` · ${date(d.deliveredAt)}` : ''} · {Number(d.returnable)}</option>)}
+                  </select>
+                )}
+              </div>
+            </Field>
+          );
+        })}
         <DialogFooter><Button variant="outline" onClick={onClose}>{tx('Cancel')}</Button><Button disabled={create.isPending} onClick={() => create.mutate()}>{tx('Create')}</Button></DialogFooter>
       </DialogContent>
     </Dialog>

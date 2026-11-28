@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (747 permissions). Constant name = GROUP__ACTION.
+ * exactly (748 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -507,6 +507,7 @@ public final class Permissions {
     public static final String SALES__RETURN_READ = "sales:return:read";
     public static final String SALES__RETURN_WRITE = "sales:return:write";
     public static final String SALES__RETURN_APPROVE = "sales:return:approve";
+    public static final String SALES__RETURN_WRITE_OFF = "sales:return:write_off";
     public static final String SALES__COMPLAINT_READ = "sales:complaint:read";
     public static final String SALES__COMPLAINT_WRITE = "sales:complaint:write";
     public static final String SALES__COLLECTIONS_READ = "sales:collections:read";
@@ -1257,6 +1258,7 @@ public final class Permissions {
             "sales:return:read",
             "sales:return:write",
             "sales:return:approve",
+            "sales:return:write_off",
             "sales:complaint:read",
             "sales:complaint:write",
             "sales:collections:read",

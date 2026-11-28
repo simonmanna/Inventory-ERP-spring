@@ -10,9 +10,10 @@ import org.springframework.stereotype.Component;
 
 /**
  * Sales share of credit exposure (credit.md §2, §4): open commitments of confirmed orders, valued at the order's
- * gross unit price ({@code lineTotal / quantity}). Undelivered = ordered − closed short − max(billable, invoiced);
- * delivered-not-invoiced = billable − invoiced. Each unit sits in exactly one bucket; once invoiced it is the
- * invoicing contributor's receivable.
+ * gross unit price ({@code lineTotal / quantity}). Undelivered = ordered − closed short − max(billable + returned and
+ * credited + written off, invoiced); delivered-not-invoiced = billable − (invoiced − credited) (ADR-S094 §4.5: goods
+ * returned and credited or written off are settled, not undelivered). Each unit sits in exactly one bucket; once
+ * invoiced it is the invoicing contributor's receivable.
  */
 @Component
 public class SalesCreditContributor implements CreditExposureContributor {
@@ -26,10 +27,11 @@ public class SalesCreditContributor implements CreditExposureContributor {
     @Override
     public Contribution contribute(String partnerId) {
         Map<String, Object> r = db.row("""
-                SELECT COALESCE(sum(GREATEST(l.quantity - l."qtyCancelled" - GREATEST(l."qtyBillable", l."qtyInvoiced"), 0)
+                SELECT COALESCE(sum(GREATEST(l.quantity - l."qtyCancelled" - GREATEST(l."qtyBillable"
+                                    + l."qtyReturnCredited" + l."qtyWrittenOff", l."qtyInvoiced"), 0)
                                     * l."lineTotal" / l.quantity), 0) AS undelivered,
-                       COALESCE(sum(GREATEST(l."qtyBillable" - l."qtyInvoiced", 0) * l."lineTotal" / l.quantity), 0)
-                           AS delivered
+                       COALESCE(sum(GREATEST(l."qtyBillable" - (l."qtyInvoiced" - l."qtyCredited"), 0) * l."lineTotal"
+                                    / l.quantity), 0) AS delivered
                   FROM "SalesOrderLine" l JOIN "SalesOrder" o ON o.id = l."orderId"
                  WHERE o."organizationId" = ? AND o."partnerId" = ? AND o.status IN ('confirmed')
                    AND o."paymentMode" = 'credit' AND o."deletedAt" IS NULL""", org(), partnerId);

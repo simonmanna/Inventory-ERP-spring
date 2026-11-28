@@ -9,7 +9,7 @@ import { date, money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
 import { useSalesOrders } from '@/features/sales/api';
-import { DELIVERY_LABEL, INVOICE_LABEL, OrderStatusPill } from './sales-ui';
+import { DELIVERY_LABEL, INVOICE_LABEL, OrderStatusPill, PaymentPill } from './sales-ui';
 
 const TABS: Array<{ key: string; label: string; extra?: Record<string, string> }> = [
   { key: '', label: tx('All') },
@@ -55,10 +55,10 @@ export function SalesOrdersPage() {
           <thead className="bg-muted/40 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             <tr><th className="px-3 py-2">{tx('Number')}</th><th className="px-3 py-2">{tx('Customer')}</th>
               <th className="px-3 py-2">{tx('Requested')}</th><th className="px-3 py-2">{tx('Status')}</th><th className="px-3 py-2">{tx('Delivery')}</th>
-              <th className="px-3 py-2">{tx('Invoicing')}</th><th className="px-3 py-2 text-right">{tx('Total')}</th></tr>
+              <th className="px-3 py-2">{tx('Invoicing')}</th><th className="px-3 py-2">{tx('Payment')}</th><th className="px-3 py-2 text-right">{tx('Total')}</th></tr>
           </thead>
           <tbody>
-            {isLoading && <tr><td colSpan={7} className="p-3"><Skeleton className="h-32 w-full" /></td></tr>}
+            {isLoading && <tr><td colSpan={8} className="p-3"><Skeleton className="h-32 w-full" /></td></tr>}
             {data?.data.map((o) => (
               <tr key={o.id} className="cursor-pointer border-t hover:bg-muted/30" onClick={() => navigate(`/sales/orders/${o.id}`)}>
                 <td className="px-3 py-2 font-medium">{o.number}{o.revision > 0 && <span className="ml-1 text-xs text-muted-foreground">r{o.revision}</span>}</td>
@@ -67,13 +67,14 @@ export function SalesOrdersPage() {
                 <td className="px-3 py-2"><OrderStatusPill status={o.stage ?? o.status} approval={o.approvalStatus} onHold={o.onHold} /></td>
                 <td className="px-3 py-2 text-xs">{DELIVERY_LABEL[o.deliveryStatus]}</td>
                 <td className="px-3 py-2 text-xs">{INVOICE_LABEL[o.invoiceStatus]}</td>
+                <td className="px-3 py-2">{o.status !== 'draft' && <PaymentPill status={o.paymentStatus} />}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{money(o.total, o.currencyCode)}</td>
               </tr>
             ))}
-            {data && data.data.length === 0 && <tr><td colSpan={7} className="p-6 text-center text-muted-foreground">{tx('No sales orders.')}</td></tr>}
+            {data && data.data.length === 0 && <tr><td colSpan={8} className="p-6 text-center text-muted-foreground">{tx('No sales orders.')}</td></tr>}
           </tbody>
           {data && data.data.length > 0 && (
-            <tfoot><tr className="border-t font-semibold"><td colSpan={6} className="px-3 py-2">{data.meta.total} {tx('orders')}</td><td className="px-3 py-2 text-right tabular-nums">{(data.totals?.byCurrency?.length ?? 0) > 1
+            <tfoot><tr className="border-t font-semibold"><td colSpan={7} className="px-3 py-2">{data.meta.total} {tx('orders')}</td><td className="px-3 py-2 text-right tabular-nums">{(data.totals?.byCurrency?.length ?? 0) > 1
               ? data.totals!.byCurrency!.map((c) => <div key={c.currencyCode ?? '-'}>{money(c.total, c.currencyCode ?? undefined)}</div>)
               : money(data.totals?.total ?? 0, data.totals?.byCurrency?.[0]?.currencyCode ?? undefined)}</td></tr></tfoot>
           )}

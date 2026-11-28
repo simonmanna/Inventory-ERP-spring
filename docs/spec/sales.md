@@ -321,6 +321,22 @@ branch scope.
   - An approval is bound to the order's commercial content and reasons (ADR-S094 §4.2). The approver cannot be the
     creator, the submitter or the last editor of that content; `allowSelfApproval` (default off) lets `sales:configure`
     holders do it, audited. `confirmOnApproval` (default on) keeps the old approve-then-confirm behaviour for orders.
+- **Returns, credits and the outcome of a sale** (ADR-S094 C2, V733; AD-9, AD-19 and AD-20 approved 2026-11-28).
+  - The order carries its financial outcome: `paymentStatus` (no_charge, not_invoiced, unpaid, partially_paid, paid,
+    credit_balance, refunded, credited, written_off), `creditStatus`, `settlementStatus` and the amounts invoiced,
+    credited, written off, received, refunded, kept as credit, outstanding and advance held. The list filters on
+    `paymentStatus` and `settlementStatus`.
+  - `POST /sales/orders/:id/keep-credit` (`sales:credit_note:write`, `{reason}`, audited) keeps the sale's open credit
+    on the customer's account, so the sale is settled.
+  - An order is done only when no load awaits its proof of delivery, no return is open and no advance is held. An
+    `ordered`-policy order invoiced at confirm turns done at the POD, not at dispatch. A zero-value line is never
+    invoiced (delivery note only).
+  - A return line names the delivery it comes back from (`loadLineId`; the only one by default) and comes back at that
+    delivery's cost, lot and serials. `GET /sales/returns/returnable?orderId=` lists what can come back per delivery.
+    Serial-tracked goods are received by serial. Inspection records the condition; damaged or defective goods cannot
+    be restocked. A refund defaults to the tender of the original receipt.
+  - A claim without goods (write-off) needs `sales:return:write_off` and an approver other than the requester.
+  - `POST /sales/credit-notes` refuses type `return` against a sale invoice: returned goods go through a sales return.
 - **Taxed down payments are deducted on the final invoice** (ADR-S094 C1b, V731, fixes D-VAT-1; AD-14 pro-rata, AD-15,
   AD-17). With `depositTaxPoint = receipt` a regular invoice of `POST /sales/orders/:id/invoices` carries one negative
   deduction line per posted taxed down payment and consumes its deposit when posted. A regular invoice is refused while

@@ -93,7 +93,10 @@ public class SalesBillingService {
                        (SELECT v.name FROM "ProductVariant" v WHERE v.id = l."variantId") AS "variantName",
                        COALESCE((SELECT sum(k.quantity) FROM "SalesInvoiceLink" k JOIN "Document" d ON d.id = k."documentId"
                                   WHERE k."orderLineId" = l.id AND k.kind = 'regular'
-                                    AND d.status::text NOT IN ('cancelled', 'rejected')), 0) AS linked
+                                    AND d.status::text NOT IN ('cancelled', 'rejected')), 0)
+                       - COALESCE((SELECT sum(k.quantity) FROM "SalesInvoiceLink" k JOIN "Document" d ON d.id = k."documentId"
+                                  WHERE k."orderLineId" = l.id AND k.kind = 'credit_note'
+                                    AND d.status::text IN ('posted', 'paid')), 0) AS linked
                   FROM "SalesOrderLine" l LEFT JOIN "Product" p ON p.id = l."productId"
                  WHERE l."orderId" = ? ORDER BY l."sortOrder\"""", o.get("id"))) {
             String policy = policy(override, l);
@@ -117,11 +120,17 @@ public class SalesBillingService {
     }
 
     /**
-     * What a line may be invoiced for in total: {@code ordered} → ordered − closed short; {@code delivered} → billable
-     * (Phase A A4: the POD-accepted quantity, pending disputes never included).
+     * What a line may be invoiced for in total (ADR-S094 §4.5 B, as {@link SalesOrderService#BILLABLE}): nothing for a
+     * zero-value line (AD-19: delivery note only); {@code ordered} → ordered − closed short − returned and credited −
+     * written off; {@code delivered} → billable (Phase A A4: the POD-accepted quantity, pending disputes never included,
+     * returns and write-offs already taken out). Compared with the net invoiced quantity (invoiced − quantity credited).
      */
     private static BigDecimal base(String policy, Map<String, Object> l) {
+        if (dec(l.get("lineTotal")).signum() == 0) {
+            return BigDecimal.ZERO;
+        }
         return "ordered".equals(policy) ? dec(l.get("quantity")).subtract(dec(l.get("qtyCancelled")))
+                .subtract(dec(l.get("qtyReturnCredited"))).subtract(dec(l.get("qtyWrittenOff"))).max(BigDecimal.ZERO)
                 : dec(l.get("qtyBillable"));
     }
 
@@ -472,7 +481,8 @@ public class SalesBillingService {
 
     /**
      * Phase A A4 post-time recheck (plan §5): for every order line a sales-order invoice carries, the live regular links
-     * (drafts and posted, any origin) must not exceed what the line may be invoiced for. Returns the problems.
+     * (drafts and posted, any origin) net of the posted credit-note links must not exceed what the line may be invoiced
+     * for (ADR-S094 §4.5: N = I − C against B, as {@link #toInvoice}). Returns the problems.
      */
     @Transactional(readOnly = true)
     public List<String> postProblems(String documentId) {
@@ -481,7 +491,10 @@ public class SalesBillingService {
                 SELECT l.*, p."invoicePolicy", o."billingPolicy", o.number AS "orderNumber",
                        COALESCE((SELECT sum(k2.quantity) FROM "SalesInvoiceLink" k2 JOIN "Document" d2 ON d2.id = k2."documentId"
                                   WHERE k2."orderLineId" = l.id AND k2.kind = 'regular'
-                                    AND d2.status::text NOT IN ('cancelled', 'rejected')), 0) AS linked
+                                    AND d2.status::text NOT IN ('cancelled', 'rejected')), 0)
+                       - COALESCE((SELECT sum(k3.quantity) FROM "SalesInvoiceLink" k3 JOIN "Document" d3 ON d3.id = k3."documentId"
+                                  WHERE k3."orderLineId" = l.id AND k3.kind = 'credit_note'
+                                    AND d3.status::text IN ('posted', 'paid')), 0) AS linked
                   FROM "SalesInvoiceLink" k
                   JOIN "SalesOrderLine" l ON l.id = k."orderLineId"
                   JOIN "SalesOrder" o ON o.id = l."orderId"
@@ -656,6 +669,7 @@ public class SalesBillingService {
                         null, null, "manual", str(l.get("taxId")), null, Boolean.TRUE.equals(l.get("taxInclusive")),
                         null))));
         link(orderId, lineId, str(cn.get("id")), "credit_note", qty, BigDecimal.ZERO, null);
+        db.update(SalesCreditFlowService.MARK_KIND, "quantity", str(cn.get("id")), org());
         audit.record(AuditInput.of("SalesOrder", orderId, "update", null, Obj.of("lateDisputeCredit",
                 cn.get("documentNumber"), "discrepancy", x.get("code"), "quantity", qty)));
         return cn;
@@ -680,7 +694,11 @@ public class SalesBillingService {
         }
     }
 
-    /** Gross invoiced per line = Σ regular links on posted / paid invoices. */
+    /**
+     * Gross invoiced per line = Σ regular links on posted / paid invoices; quantity credited = Σ credit-note links on
+     * posted credit notes, whichever route created them (ADR-S094 §7.3: value credits carry no line quantity). Then the
+     * order status and outcome.
+     */
     @Transactional
     public void recomputeInvoiced(String orderId) {
         // IPR LK-3: the sales order before its lines, the order every other sales path uses.
@@ -688,6 +706,9 @@ public class SalesBillingService {
         db.update("""
                 UPDATE "SalesOrderLine" l SET "qtyInvoiced" = COALESCE((SELECT sum(k.quantity) FROM "SalesInvoiceLink" k
                        JOIN "Document" d ON d.id = k."documentId" WHERE k."orderLineId" = l.id AND k.kind = 'regular'
+                        AND d.status::text IN ('posted', 'paid')), 0),
+                       "qtyCredited" = COALESCE((SELECT sum(k.quantity) FROM "SalesInvoiceLink" k
+                       JOIN "Document" d ON d.id = k."documentId" WHERE k."orderLineId" = l.id AND k.kind = 'credit_note'
                         AND d.status::text IN ('posted', 'paid')), 0)
                  WHERE l."orderId" = ?""", orderId);
         orders.refreshStatus(orderId);
@@ -704,7 +725,8 @@ public class SalesBillingService {
         List<Map<String, Object>> findings = new ArrayList<>();
         List<Map<String, Object>> lines = db.rows("""
                 SELECT o.id AS "orderId", o.number, l.id AS "lineId", l.description, l."qtyInvoiced", l."qtyCredited",
-                       l."qtyBillable", p."invoicePolicy", o."billingPolicy", l.quantity, l."qtyCancelled"
+                       l."qtyBillable", p."invoicePolicy", o."billingPolicy", l.quantity, l."qtyCancelled", l."lineTotal",
+                       l."qtyReturnCredited", l."qtyWrittenOff"
                   FROM "SalesOrderLine" l JOIN "SalesOrder" o ON o.id = l."orderId"
                   LEFT JOIN "Product" p ON p.id = l."productId"
                  WHERE o."organizationId" = ? AND o."deletedAt" IS NULL

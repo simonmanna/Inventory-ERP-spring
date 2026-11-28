@@ -100,16 +100,22 @@ public class SalesFulfilmentService {
             String basis = l.get("billingBasis") == null ? "accepted" : str(l.get("billingBasis"));
             // Phase A A4: accepted / weighed bill what the customer accepted at the POD (pending disputes never count);
             // the ordered basis keeps ordered-quantity billing as before A4 (owner decision 2026-11-16).
-            BigDecimal auto = switch (basis) {
+            BigDecimal physical = switch (basis) {
                 case "ordered" -> dispatched.min(dec(l.get("quantity")).subtract(dec(l.get("qtyCancelled"))));
                 default -> absorbExcess ? accepted.min(dec(l.get("quantity")).subtract(dec(l.get("qtyCancelled")))
                         .max(BigDecimal.ZERO)) : accepted;
             };
+            // ADR-S094 §4.5 B: goods returned and credited, and quantities written off, are no longer billable; a
+            // zero-value line is never invoiced (AD-19: delivery note only).
+            BigDecimal auto = dec(l.get("lineTotal")).signum() == 0 ? BigDecimal.ZERO
+                    : physical.subtract(dec(l.get("qtyReturnCredited"))).subtract(dec(l.get("qtyWrittenOff")))
+                            .max(BigDecimal.ZERO);
             Map<String, Object> last = db.row("SELECT basis, quantity FROM \"SalesFulfilmentDecision\" WHERE"
                     + " \"orderLineId\" = ? ORDER BY \"createdAt\" DESC LIMIT 1", lineId);
-            BigDecimal billable = last != null && "manual".equals(last.get("basis")) ? dec(last.get("quantity")) : auto;
+            boolean manual = last != null && "manual".equals(last.get("basis"));
+            BigDecimal billable = manual ? dec(last.get("quantity")) : auto;
             BigDecimal previous = dec(l.get("qtyBillable"));
-            if (billable.compareTo(previous) != 0 && !(last != null && "manual".equals(last.get("basis")))) {
+            if (billable.compareTo(previous) != 0 && !manual) {
                 decide(orderId, lineId, basis, billable, previous, "Recomputed from fleet deliveries");
             }
             boolean diff = loaded.compareTo(dec(l.get("qtyLoaded"))) != 0
@@ -153,6 +159,34 @@ public class SalesFulfilmentService {
             out.put(str(r.get("line")), r);
         }
         return out;
+    }
+
+    /**
+     * ADR-S094 §4.5: goods returned and credited (R) or written off (W) on a line leave its billable quantity by
+     * {@code less}, recorded with {@code reason} on the basis the line follows now — a manual decision stays manual, so
+     * it keeps applying; otherwise the next rebuild computes the same figure (physical − R − W). Zero-value lines stay 0.
+     */
+    @Transactional
+    public void lessBillable(String orderId, String lineId, BigDecimal less, String reason) {
+        Map<String, Object> l = db.row("SELECT l.\"qtyBillable\", l.\"lineTotal\", p.\"billingBasis\" FROM \"SalesOrderLine\" l"
+                + " LEFT JOIN \"Product\" p ON p.id = l.\"productId\" WHERE l.id = ? AND l.\"orderId\" = ? AND"
+                + " l.\"organizationId\" = ? FOR UPDATE OF l", lineId, orderId, org());
+        if (l == null || less.signum() <= 0) {
+            return;
+        }
+        BigDecimal before = dec(l.get("qtyBillable"));
+        BigDecimal after = dec(l.get("lineTotal")).signum() == 0 ? BigDecimal.ZERO
+                : before.subtract(less).max(BigDecimal.ZERO);
+        if (after.compareTo(before) == 0) {
+            return;
+        }
+        Map<String, Object> last = db.row("SELECT basis FROM \"SalesFulfilmentDecision\" WHERE \"orderLineId\" = ? ORDER"
+                + " BY \"createdAt\" DESC LIMIT 1", lineId);
+        String basis = last != null && "manual".equals(last.get("basis")) ? "manual"
+                : l.get("billingBasis") == null ? "accepted" : str(l.get("billingBasis"));
+        decide(orderId, lineId, basis, after, before, reason);
+        db.update("UPDATE \"SalesOrderLine\" SET \"qtyBillable\" = ? WHERE id = ? AND \"organizationId\" = ?", after,
+                lineId, org());
     }
 
     private void decide(String orderId, String lineId, String basis, BigDecimal qty, BigDecimal previous, String reason) {
@@ -202,8 +236,9 @@ public class SalesFulfilmentService {
         List<Map<String, Object>> lines = new ArrayList<>();
         for (Map<String, Object> l : db.rows("SELECT l.id, l.description, l.quantity, l.\"qtyCancelled\", l.\"qtyLoaded\","
                 + " l.\"qtyDispatched\", l.\"qtyReceived\", l.\"qtyAccepted\", l.\"qtyBillable\", l.\"qtyInvoiced\","
-                + " l.\"qtyCredited\", p.\"billingBasis\" FROM \"SalesOrderLine\" l LEFT JOIN \"Product\" p ON p.id ="
-                + " l.\"productId\" WHERE l.\"orderId\" = ? ORDER BY l.\"sortOrder\"", orderId)) {
+                + " l.\"qtyCredited\", l.\"qtyReturned\", l.\"qtyReturnCredited\", l.\"qtyWrittenOff\", p.\"billingBasis\""
+                + " FROM \"SalesOrderLine\" l LEFT JOIN \"Product\" p ON p.id = l.\"productId\" WHERE l.\"orderId\" = ? ORDER BY"
+                + " l.\"sortOrder\"", orderId)) {
             l.put("decisions", db.rows("SELECT basis, quantity, \"previousQty\", reason, \"decidedById\", \"createdAt\" FROM"
                     + " \"SalesFulfilmentDecision\" WHERE \"orderLineId\" = ? ORDER BY \"createdAt\" DESC", l.get("id")));
             lines.add(l);

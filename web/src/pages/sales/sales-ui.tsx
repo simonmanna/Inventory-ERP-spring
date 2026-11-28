@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
-import type { DeliveryStatus, InvoiceStatus, SalesApprovalStatus, SalesOrderStage } from '@/features/sales/api';
+import type { DeliveryStatus, InvoiceStatus, SalesApprovalStatus, SalesOrderStage, SalesPaymentStatus } from '@/features/sales/api';
 
 export const ORDER_STATUS_LABEL: Record<SalesOrderStage, string> = {
   draft: tx('Draft'), pending_approval: tx('Pending approval'), confirmed: tx('Confirmed'),
@@ -13,6 +13,24 @@ const ORDER_TONE: Record<SalesOrderStage, string> = {
 };
 export const DELIVERY_LABEL: Record<DeliveryStatus, string> = { none: tx('Not delivered'), partial: tx('Partially delivered'), full: tx('Delivered') };
 export const INVOICE_LABEL: Record<InvoiceStatus, string> = { nothing: tx('Nothing to invoice'), to_invoice: tx('To invoice'), partial: tx('Partially invoiced'), invoiced: tx('Fully invoiced') };
+
+export const PAYMENT_LABEL: Record<SalesPaymentStatus, string> = {
+  no_charge: tx('No charge'), not_invoiced: tx('Not invoiced'), unpaid: tx('Unpaid'), partially_paid: tx('Partially paid'),
+  paid: tx('Paid'), credit_balance: tx('Credit balance'), refunded: tx('Refunded'), credited: tx('Credited'), written_off: tx('Written off'),
+};
+const PAYMENT_TONE: Record<SalesPaymentStatus, string> = {
+  no_charge: 'border border-slate-300 text-slate-700 dark:text-slate-300', not_invoiced: 'border border-slate-300 text-slate-700 dark:text-slate-300',
+  unpaid: 'border border-amber-300 text-amber-800 dark:text-amber-300', partially_paid: 'border border-amber-300 text-amber-800 dark:text-amber-300',
+  paid: 'border border-emerald-300 text-emerald-800 dark:text-emerald-300', credit_balance: 'border border-sky-300 text-sky-800 dark:text-sky-300',
+  refunded: 'border border-slate-300 text-slate-700 dark:text-slate-300', credited: 'border border-slate-300 text-slate-700 dark:text-slate-300',
+  written_off: 'border border-rose-300 text-rose-800 dark:text-rose-300',
+};
+
+/** Where the money of a confirmed sale stands (ADR-S094 §4.4). */
+export function PaymentPill({ status }: { status?: SalesPaymentStatus }) {
+  if (!status) return null;
+  return <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', PAYMENT_TONE[status])}>{PAYMENT_LABEL[status] ?? status}</span>;
+}
 
 const APPROVAL_CHIP: Partial<Record<SalesApprovalStatus, [string, string]>> = {
   required: [tx('Needs approval'), 'border border-amber-300 text-amber-800 dark:text-amber-300'],

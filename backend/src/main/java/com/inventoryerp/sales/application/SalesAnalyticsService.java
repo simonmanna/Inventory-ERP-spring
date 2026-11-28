@@ -283,10 +283,12 @@ public class SalesAnalyticsService {
         Map<LocalDate, BigDecimal[]> f = new LinkedHashMap<>();
         buckets.forEach(b -> f.put(b, new BigDecimal[] {BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO}));
 
+        // Open order value still to invoice; goods returned and credited or written off will never be (ADR-S094 §4.5).
         for (Map<String, Object> o : db.rows("""
                 SELECT COALESCE(o."commitmentDate", o."requestedDate") AS due,
-                       sum((l.quantity - l."qtyCancelled" - (l."qtyInvoiced" - l."qtyCredited")) * l."unitPrice"
-                           * (1 - l."discountPercent" / 100)) AS open
+                       sum((l.quantity - l."qtyCancelled" - l."qtyReturnCredited" - l."qtyWrittenOff"
+                            - (l."qtyInvoiced" - l."qtyCredited")) * l."unitPrice" * (1 - l."discountPercent" / 100))
+                           AS open
                   FROM "SalesOrder" o JOIN "SalesOrderLine" l ON l."orderId" = o.id
                  WHERE o."organizationId" = ? AND o.status IN ('confirmed') AND o."deletedAt" IS NULL
                  GROUP BY 1""", org())) {
