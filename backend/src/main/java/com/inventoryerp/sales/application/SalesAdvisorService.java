@@ -83,7 +83,7 @@ public class SalesAdvisorService {
         for (Map<String, Object> r : db.rows("""
                 SELECT p.id, p.name, sum(d."amountResidual") AS overdue,
                        (SELECT count(*) FROM "SalesOrder" o WHERE o."partnerId" = p.id AND o."organizationId" = p."organizationId"
-                           AND o.status IN ('confirmed', 'in_fulfilment') AND o."deliveryStatus" <> 'full'
+                           AND o.status IN ('confirmed') AND o."deliveryStatus" <> 'full'
                            AND o."deletedAt" IS NULL) AS orders
                   FROM "Document" d JOIN "Partner" p ON p.id = d."partnerId"
                  WHERE d."organizationId" = ? AND d."documentType" = 'sales_invoice' AND d.status = 'posted'
@@ -101,7 +101,7 @@ public class SalesAdvisorService {
                        sum(al."contractQty") AS contract,
                        COALESCE((SELECT sum((l.quantity - l."qtyCancelled") * l."uomFactor") FROM "SalesOrderLine" l
                                    JOIN "SalesOrder" o ON o.id = l."orderId" WHERE o."agreementId" = a.id
-                                    AND o."deletedAt" IS NULL AND o.status IN ('confirmed', 'in_fulfilment', 'done')), 0)
+                                    AND o."deletedAt" IS NULL AND o.status IN ('confirmed', 'done')), 0)
                            AS released
                   FROM "SalesAgreement" a JOIN "SalesAgreementLine" al ON al."agreementId" = a.id
                  WHERE a."organizationId" = ? AND a.status = 'active' AND a."endDate" <= CURRENT_DATE + 30

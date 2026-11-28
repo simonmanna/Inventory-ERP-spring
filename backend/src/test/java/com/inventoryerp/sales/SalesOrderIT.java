@@ -196,7 +196,8 @@ class SalesOrderIT extends ApiTestSupport {
         assertThat(old.get("qty").get("grossInvoiced").asDouble()).isEqualTo(30);
         assertThat(rest.get("unitPrice").asDouble()).isEqualTo(45000);
         assertThat(rest.get("quantity").asDouble()).isEqualTo(70);
-        assertThat(so.get("status").asString()).isEqualTo("in_fulfilment");
+        assertThat(so.get("status").asString()).isEqualTo("confirmed");
+        assertThat(so.get("stage").asString()).as("ADR-S094 §4.6 legacy stage").isEqualTo("in_fulfilment");
         assertThat(so.get("deliveryStatus").asString()).isEqualTo("partial");
     }
 

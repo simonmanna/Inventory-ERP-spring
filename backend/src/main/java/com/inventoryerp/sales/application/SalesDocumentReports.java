@@ -169,11 +169,11 @@ class SalesDocumentReports implements SalesReportSet {
         d.add(def("order-register", ORD, "Sales Order Register", "All sales orders of the period.", withStatus,
                 f -> orders(f, null, true, "register")));
         d.add(def("open-orders", ORD, "Open Sales Orders", "Confirmed orders still being fulfilled.", SNAPSHOT,
-                f -> orders(f, " AND o.status IN ('confirmed', 'in_fulfilment')", false, "open")));
+                f -> orders(f, " AND o.status IN ('confirmed')", false, "open")));
         d.add(def("pending-orders", ORD, "Pending Sales Orders", "Draft orders and orders awaiting approval.",
-                SNAPSHOT, f -> orders(f, " AND o.status IN ('draft', 'pending_approval')", false, "pending")));
+                SNAPSHOT, f -> orders(f, " AND o.status = 'draft'", false, "pending")));
         d.add(def("approved-orders", ORD, "Approved Sales Orders", "Orders confirmed in the period.", DOC,
-                f -> orders(f, " AND o.status IN ('confirmed', 'in_fulfilment', 'done')", true, "approved")));
+                f -> orders(f, " AND o.status IN ('confirmed', 'done')", true, "approved")));
         d.add(def("partially-fulfilled-orders", ORD, "Partially Fulfilled Orders",
                 "Orders with some quantity delivered.", SNAPSHOT,
                 f -> orders(f, " AND o.\"deliveryStatus\" = 'partial' AND o.status <> 'cancelled'", false, "open")));
@@ -183,7 +183,7 @@ class SalesDocumentReports implements SalesReportSet {
                 f -> orders(f, " AND o.status = 'cancelled'", true, "cancelled")));
         d.add(def("overdue-orders", ORD, "Overdue Sales Orders",
                 "Open orders past their commitment (or requested) date.", with(SNAPSHOT, "asOf"),
-                f -> orders(f, " AND o.status IN ('confirmed', 'in_fulfilment') AND o.\"deliveryStatus\" <> 'full' AND"
+                f -> orders(f, " AND o.status IN ('confirmed') AND o.\"deliveryStatus\" <> 'full' AND"
                         + " COALESCE(o.\"commitmentDate\", o.\"requestedDate\") < '" + f.asOf() + "'", false,
                         "overdue")));
         d.add(def("backorders", ORD, "Backorders", "Ordered quantities not yet delivered on open orders.", SNAPSHOT,
@@ -252,14 +252,14 @@ class SalesDocumentReports implements SalesReportSet {
                 "Every load dispatched to customers with vehicle, driver and quantities.", DOC,
                 f -> loads(f, null, "register")));
         d.add(def("pending-deliveries", DEL, "Pending Deliveries", "Open orders with quantity still to dispatch.",
-                SNAPSHOT, f -> orders(f, " AND o.status IN ('confirmed', 'in_fulfilment') AND ol.\"toDispatch\" > 0",
+                SNAPSHOT, f -> orders(f, " AND o.status IN ('confirmed') AND ol.\"toDispatch\" > 0",
                         false, "dispatch")));
         d.add(def("partial-deliveries", DEL, "Partial Deliveries", "Orders delivered in part.", SNAPSHOT,
                 f -> orders(f, " AND o.\"deliveryStatus\" = 'partial' AND o.status <> 'cancelled'", false, "open")));
         d.add(def("completed-deliveries", DEL, "Completed Deliveries", "Fully delivered orders.", DOC,
                 f -> orders(f, " AND o.\"deliveryStatus\" = 'full'", true, "done")));
         d.add(def("undelivered-orders", DEL, "Undelivered Orders", "Confirmed orders with nothing delivered yet.",
-                SNAPSHOT, f -> orders(f, " AND o.status IN ('confirmed', 'in_fulfilment') AND o.\"deliveryStatus\" ="
+                SNAPSHOT, f -> orders(f, " AND o.status IN ('confirmed') AND o.\"deliveryStatus\" ="
                         + " 'none'", false, "open")));
         d.add(def("delivery-performance", DEL, "Delivery Performance", "On-time vs late deliveries by period.",
                 with(DOC, "groupBy"), this::deliveryPerformance));
@@ -289,7 +289,9 @@ class SalesDocumentReports implements SalesReportSet {
         Sql s = new Sql(ORDERS, org());
         SalesReportKit.apply(s, f, ORDER_SCOPE, period);
         if (f.status() != null) {
-            s.add(" AND o.status = ?", f.status());
+            // ADR-S094 §4.6: a saved filter on pending_approval / in_fulfilment still matches, through the derived stage
+            s.add(" AND (o.status = ? OR " + SalesOrderService.STAGE_SQL.formatted("o") + " = ?)", f.status(),
+                    f.status());
         }
         s.add(where == null ? "" : where).add(" ORDER BY COALESCE(o.\"confirmedAt\", o.\"createdAt\") DESC LIMIT 2000");
         List<Map<String, Object>> rows = db.rows(s.toString(), s.params);
@@ -392,7 +394,7 @@ class SalesDocumentReports implements SalesReportSet {
     }
 
     Report backorders(Filter f) {
-        List<Map<String, Object>> rows = lineRows(f, " AND o.status IN ('confirmed', 'in_fulfilment') AND"
+        List<Map<String, Object>> rows = lineRows(f, " AND o.status IN ('confirmed') AND"
                 + " l.quantity - l.\"qtyCancelled\" - l.\"qtyDelivered\" > 0", false);
         Report rep = table(rows, "number|Order|text", "date|Date|date", "customer|Customer|text",
                 "product|Product|text", "unit|Unit|text", "quantity|Ordered|qty", "qtyReserved|Reserved|qty",
@@ -692,7 +694,7 @@ class SalesDocumentReports implements SalesReportSet {
     }
 
     Report customerOpenOrders(Filter f) {
-        List<Map<String, Object>> rows = orderRows(f, " AND o.status IN ('confirmed', 'in_fulfilment') AND"
+        List<Map<String, Object>> rows = orderRows(f, " AND o.status IN ('confirmed') AND"
                 + " o.\"deliveryStatus\" <> 'full'", false);
         Map<String, Map<String, Object>> g = new LinkedHashMap<>();
         for (Map<String, Object> r : rows) {

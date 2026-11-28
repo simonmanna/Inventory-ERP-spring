@@ -69,7 +69,7 @@ public class SalesHandoverService {
             }
             String st = str(o.get("status"));
             String stage = "cancelled".equals(st) ? "closed"
-                    : List.of("confirmed", "in_fulfilment", "done").contains(st) ? "ready" : "plan";
+                    : List.of("confirmed", "done").contains(st) ? "ready" : "plan";
             return new Source(type, id, stage, o);
         }
         if (INVOICE.equals(type)) {

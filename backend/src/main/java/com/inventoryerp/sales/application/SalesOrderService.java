@@ -43,8 +43,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * B2B sales orders (ADR-S011, phase S1). Lifecycle {@code draft → (pending_approval) → confirmed → in_fulfilment →
- * done}, {@code cancelled}; {@code onHold} overlays an open order (credit / manual). Draft orders are edited in
+ * B2B sales orders (ADR-S011, phase S1). Lifecycle {@code draft → confirmed → done}, {@code cancelled}; approval is
+ * its own dimension ({@code approvalStatus}, ADR-S094 §4.2: submitted explicitly, bound to the approvable content);
+ * {@code onHold} overlays an open order (credit / manual); delivery and invoice progress are {@code deliveryStatus} and
+ * {@code invoiceStatus}, and the old single value comes back as the derived {@code stage}. Draft orders are edited in
  * place; confirmed orders change only through {@link SalesOrderChangeService} (immutable revisions). Ordered and
  * closed-short quantities are owned here; delivered / billable / invoiced / reserved / returned columns are
  * projections of the owning modules, maintained by later phases.
@@ -53,16 +55,24 @@ import org.springframework.transaction.annotation.Transactional;
 public class SalesOrderService {
 
     static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
-    static final Set<String> OPEN = Set.of("confirmed", "in_fulfilment");
+    static final Set<String> OPEN = Set.of("confirmed");
+
+    /**
+     * ADR-S094 §4.6: the lifecycle value of before C1, derived for one release so cached clients and reports keep
+     * working ({@code %1$s} = the order's table alias).
+     */
+    public static final String STAGE_SQL = "CASE WHEN %1$s.status = 'draft' AND %1$s.\"approvalStatus\" = 'pending' THEN"
+            + " 'pending_approval' WHEN %1$s.status = 'confirmed' AND (%1$s.\"deliveryStatus\" IN ('partial', 'full') OR"
+            + " %1$s.\"invoiceStatus\" IN ('partial', 'invoiced')) THEN 'in_fulfilment' ELSE %1$s.status END";
 
     private static final String SELECT = """
-            SELECT o.*, p.name AS "partnerName", q.number AS "quotationNumber",
+            SELECT o.*, p.name AS "partnerName", q.number AS "quotationNumber", %s AS stage,
                    COALESCE(NULLIF(trim(concat_ws(' ', u."firstName", u."lastName")), ''), u.email) AS "ownerName"
               FROM "SalesOrder" o
               LEFT JOIN "Partner" p ON p.id = o."partnerId"
               LEFT JOIN "SalesQuotation" q ON q.id = o."quotationId"
               LEFT JOIN "User" u ON u.id = o."ownerId"
-            """;
+            """.formatted(STAGE_SQL.formatted("o"));
 
     private final SalesDb db;
     private final SalesSettingsService settings;
@@ -126,8 +136,16 @@ public class SalesOrderService {
         List<Object> params = new ArrayList<>(List.of(org()));
         visibility(where, params);
         if (!blank(p.get("status"))) {
+            // ADR-S094 §4.6: the old values pending_approval / in_fulfilment still filter, through the derived stage.
             List<String> st = List.of(p.get("status").split(","));
-            where.append(" AND o.status IN (").append(SalesDb.marks(st.size())).append(')');
+            where.append(" AND (o.status IN (").append(SalesDb.marks(st.size())).append(") OR ")
+                    .append(STAGE_SQL.formatted("o")).append(" IN (").append(SalesDb.marks(st.size())).append("))");
+            params.addAll(st);
+            params.addAll(st);
+        }
+        if (!blank(p.get("approvalStatus"))) {
+            List<String> st = List.of(p.get("approvalStatus").split(","));
+            where.append(" AND o.\"approvalStatus\" IN (").append(SalesDb.marks(st.size())).append(')');
             params.addAll(st);
         }
         for (String k : List.of("partnerId", "ownerId", "quotationId", "branchId")) {
@@ -140,7 +158,7 @@ public class SalesOrderService {
             where.append(" AND o.\"onHold\"");
         }
         if ("true".equals(p.get("toFulfil"))) {
-            where.append(" AND o.status IN ('confirmed', 'in_fulfilment') AND o.\"deliveryStatus\" <> 'full'");
+            where.append(" AND o.status = 'confirmed' AND o.\"deliveryStatus\" <> 'full'");
         }
         if (!blank(p.get("q"))) {
             String like = "%" + com.inventoryerp.kernel.crud.BaseCrudService.escapeLike(p.get("q").trim()) + "%";
@@ -183,7 +201,49 @@ public class SalesOrderService {
         }
         o.put("relations", relations(o));
         o.put("canAmend", OPEN.contains(o.get("status")) && TenantContext.has(Permissions.SALES__ORDER_AMEND));
+        Map<String, Object> rules = "draft".equals(o.get("status")) ? settings.stored() : null;
+        if (rules != null) {
+            // ADR-S094 §4.2: the approval state as it stands now — a rule changed since the last save shows here
+            Approval a = effectiveApproval(db.row("SELECT * FROM \"SalesOrder\" WHERE id = ? AND \"organizationId\" = ?", id,
+                    org()), orderLines(id), rules);
+            o.put("approvalStatus", a.status());
+            if (!Set.of("pending", "rejected").contains(a.status())) {
+                o.put("approvalReasons", a.reasons());
+            }
+        }
+        o.put("actions", actions(o));
         return o;
+    }
+
+    /**
+     * ADR-S094 §4.2: the lifecycle commands the caller may run on the order now (state, permission and separation of
+     * duties), so the screens only offer what the API accepts.
+     */
+    private List<String> actions(Map<String, Object> o) {
+        List<String> out = new ArrayList<>();
+        if (!"draft".equals(o.get("status"))) {
+            return out;
+        }
+        String approval = str(o.get("approvalStatus"));
+        if (Set.of("required", "rejected").contains(approval) && TenantContext.has(Permissions.SALES__ORDER_WRITE)) {
+            out.add("submit_approval");
+        }
+        if ("pending".equals(approval)) {
+            if (user() != null && (user().equals(o.get("approvalSubmittedById")) || TenantContext.has(
+                    Permissions.SALES__CONFIGURE))) {
+                out.add("withdraw_approval");
+            }
+            if (TenantContext.has(Permissions.SALES__ORDER_APPROVE) && selfApprovalProblem(o) == null) {
+                out.add("approve");
+            }
+            if (TenantContext.has(Permissions.SALES__ORDER_APPROVE)) {
+                out.add("reject");
+            }
+        }
+        if (Set.of("not_required", "approved").contains(approval) && TenantContext.has(Permissions.SALES__ORDER_CONFIRM)) {
+            out.add("confirm");
+        }
+        return out;
     }
 
     List<Map<String, Object>> lines(String orderId) {
@@ -289,6 +349,7 @@ public class SalesOrderService {
         String id = str(row.get("id"));
         writeLines(id, partnerId, str(header.get("agreementId")), LocalDate.now(BusinessZone.get()), in.get("lines"),
                 str(header.get("locationId")), PriceScope.of(header));
+        evaluateApproval(id);
         audit.record(AuditInput.of("SalesOrder", id, "create", null, Obj.of("number", row.get("number"))));
         return get(id);
     }
@@ -347,6 +408,7 @@ public class SalesOrderService {
                 keepSavedFactor(lineId, l.get("uomId"), l.get("uomFactor"));
             }
         }
+        evaluateApproval(id);
         audit.record(AuditInput.of("SalesOrder", id, "create", null, Obj.of("number", row.get("number"), "quotationId",
                 q.get("id"))));
         return get(id);
@@ -388,6 +450,7 @@ public class SalesOrderService {
                     o.get("agreementId"))), LocalDate.now(BusinessZone.get()), in.get("lines"), str(d.getOrDefault("locationId",
                             o.get("locationId"))), PriceScope.of(o, d));
         }
+        evaluateApproval(id);
         audit.record(AuditInput.of("SalesOrder", id, "update", null, Obj.of("fields", d.keySet(), "lines",
                 in.containsKey("lines"))));
         return get(id);
@@ -403,6 +466,7 @@ public class SalesOrderService {
         db.update("UPDATE \"SalesOrder\" SET \"deletedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?", id,
                 org());
         closeCreditRequests(id, "Order deleted");
+        withdrawEngineRequest(o, "Order deleted");
         audit.record(AuditInput.of("SalesOrder", id, "delete"));
         return Obj.of("ok", true);
     }
@@ -829,9 +893,11 @@ public class SalesOrderService {
     public static final String APPROVAL_ENTITY = "sales_order";
 
     /**
-     * Confirm a draft order. Commercial policy (extra discount beyond the authorised price, order amount, margin floor)
-     * sends it to approval first ({@code pending_approval}); otherwise it is confirmed at once. On confirmation the
-     * exchange rate is locked and a customer on credit hold puts the order on hold (credit exposure checks: S3).
+     * Confirm a draft order. ADR-S094 §4.2: when commercial policy (extra discount beyond the authorised price, order
+     * amount, margin floor, agreement release) asks for approval, the order is confirmed only once an approval covers
+     * its current content and reasons; it goes to approval through {@link #submitApproval}, never implicitly here. On
+     * confirmation the exchange rate is locked and a customer on credit hold puts the order on hold (credit exposure
+     * checks: S3).
      */
     @Transactional
     public Map<String, Object> confirm(String id) {
@@ -852,20 +918,213 @@ public class SalesOrderService {
             throw ApiException.badRequest("Not enough stock to confirm this order: short by "
                     + shortages.get(0).get("shortage") + " on " + shortDescription(lines, shortages.get(0)));
         }
-        List<String> reasons = approvalReasons(o, lines);
-        if (!reasons.isEmpty()) {
-            Map<String, Object> snapshot = Obj.of("number", o.get("number"), "partnerId", o.get("partnerId"), "total",
-                    o.get("total"), "amount", o.get("total"), "maxDiscountPercent", o.get("maxDiscountPercent"), "reasons",
-                    reasons);
-            Map<String, Object> req = approvals.requestApproval(APPROVAL_ENTITY, id, snapshot, null);
-            db.patch("SalesOrder", id, Obj.of("status", "pending_approval", "approvalReasons", reasons,
-                    "approvalRequestId", req == null ? null : req.get("id"), "version",
-                    ((Number) o.get("version")).intValue() + 1), true);
-            audit.record(AuditInput.of("SalesOrder", id, "update", null, Obj.of("status", "pending_approval", "reasons",
-                    reasons)));
-            return get(id);
+        Approval approval = effectiveApproval(o, lines);
+        if ("pending".equals(approval.status())) {
+            throw ApiException.badRequest("This sale is waiting for approval");
+        }
+        if (!Set.of("not_required", "approved").contains(approval.status())) {
+            throw ApiException.badRequest("This sale needs approval: submit it for approval first");
         }
         return finishConfirm(id);
+    }
+
+    // ------------------------------------------------------------------ approval (ADR-S094 §4.2)
+
+    /** The approval state of a draft as it is now, its current reasons and the hash of its approvable content. */
+    private record Approval(String status, List<String> reasons, String hash) {}
+
+    private List<Map<String, Object>> orderLines(String id) {
+        return db.rows("SELECT * FROM \"SalesOrderLine\" WHERE \"orderId\" = ? ORDER BY \"sortOrder\", id", id);
+    }
+
+    /**
+     * The approval state of the order as it stands: an approval holds while the approvable content is the one approved
+     * and every current reason was approved (a stricter rule asks only for its new reasons; a relaxed one revokes
+     * nothing); a rejection holds while the content is the one rejected; otherwise the current reasons decide.
+     */
+    private Approval effectiveApproval(Map<String, Object> o, List<Map<String, Object>> lines) {
+        return effectiveApproval(o, lines, settings.settings());
+    }
+
+    private Approval effectiveApproval(Map<String, Object> o, List<Map<String, Object>> lines, Map<String, Object> rules) {
+        List<String> reasons = approvalReasons(o, lines, rules);
+        String hash = SalesApprovalContent.hash(o, lines);
+        String need = reasons.isEmpty() ? "not_required" : "required";
+        String status = switch (str(o.get("approvalStatus"))) {
+            case "pending" -> "pending";
+            case "rejected" -> hash.equals(o.get("approvalSubmittedHash")) ? "rejected" : need;
+            case "approved" -> hash.equals(o.get("approvedHash")) && SalesApprovalContent.covered(reasons,
+                    SalesDb.strings(o.get("approvedReasons"))) ? "approved" : need;
+            case null, default -> need;
+        };
+        return new Approval(status, reasons, hash);
+    }
+
+    /**
+     * Re-evaluate a draft's approval after a save: an approval or a rejection lapses when the approvable content
+     * changed, the current reasons are recorded, and so is who last changed approvable content (separation of
+     * duties). While the order waits for approval its approvable content cannot change.
+     */
+    void evaluateApproval(String id) {
+        Map<String, Object> o = db.row("SELECT * FROM \"SalesOrder\" WHERE id = ? AND \"organizationId\" = ?", id, org());
+        if (o == null || !"draft".equals(o.get("status"))) {
+            return;
+        }
+        Approval a = effectiveApproval(o, orderLines(id));
+        if ("pending".equals(a.status()) && !a.hash().equals(o.get("approvalSubmittedHash"))) {
+            throw ApiException.badRequest("This sale is waiting for approval: withdraw it before changing its customer,"
+                    + " lines, prices or terms");
+        }
+        Map<String, Object> d = new LinkedHashMap<>();
+        if (!a.hash().equals(o.get("approvalContentHash"))) {
+            d.put("approvalContentHash", a.hash());
+            d.put("approvalContentEditedById", user());
+        }
+        d.put("approvalStatus", a.status());
+        if (!Set.of("pending", "rejected").contains(a.status())) {
+            d.put("approvalReasons", a.reasons());
+        }
+        db.patch("SalesOrder", id, d, false);
+    }
+
+    /**
+     * Submit a draft for approval (explicit; ADR-S094 §4.2). Only an order that needs approval can be submitted; one
+     * rejected and unchanged since needs a written justification. The approval request is bound to the approvable
+     * content (hash), the reasons and the approval rules in force.
+     */
+    @Transactional
+    public Map<String, Object> submitApproval(String id, String justification) {
+        Map<String, Object> o = lock(id);
+        if (!"draft".equals(o.get("status"))) {
+            throw ApiException.badRequest("Only draft orders can be submitted for approval");
+        }
+        List<Map<String, Object>> lines = orderLines(id);
+        if (lines.isEmpty()) {
+            throw ApiException.badRequest("Add at least one line before submitting it for approval");
+        }
+        Approval a = effectiveApproval(o, lines);
+        switch (a.status()) {
+            case "pending" -> throw ApiException.badRequest("This sale is already waiting for approval");
+            case "not_required" -> throw ApiException.badRequest("This sale needs no approval; confirm it");
+            case "approved" -> throw ApiException.badRequest("This sale is already approved; confirm it");
+            case "rejected" -> {
+                if (blank(justification)) {
+                    throw ApiException.badRequest("This sale was rejected and has not changed since: give a"
+                            + " justification to submit it again");
+                }
+            }
+            default -> { }
+        }
+        Map<String, Object> snapshot = Obj.of("number", o.get("number"), "partnerId", o.get("partnerId"), "total",
+                o.get("total"), "amount", o.get("total"), "maxDiscountPercent", o.get("maxDiscountPercent"), "reasons",
+                a.reasons(), "justification", blank(justification) ? null : justification, "makerIds", String.join(",",
+                        java.util.stream.Stream.of(str(o.get("createdById")), user(), str(o.get("approvalContentEditedById")))
+                                .filter(m -> !blank(m)).distinct().toList()));
+        Map<String, Object> req = approvals.requestApproval(APPROVAL_ENTITY, id, snapshot, null);
+        Map<String, Object> d = new LinkedHashMap<>();
+        d.put("approvalStatus", "pending");
+        d.put("approvalReasons", a.reasons());
+        d.put("approvalSubmittedHash", a.hash());
+        d.put("approvalSubmittedReasons", a.reasons());
+        d.put("approvalRuleVersion", SalesApprovalContent.ruleVersion(settings.settings()));
+        d.put("approvalSubmittedById", user());
+        d.put("approvalSubmittedAt", Instant.now());
+        d.put("approvalJustification", blank(justification) ? null : justification);
+        d.put("approvalRequestId", req == null ? null : req.get("id"));
+        d.put("approvalContentHash", a.hash());
+        d.put("version", ((Number) o.get("version")).intValue() + 1);
+        db.patch("SalesOrder", id, d, true);
+        audit.record(AuditInput.of("SalesOrder", id, "update", null, Obj.of("approval", "submitted", "reasons", a.reasons(),
+                "justification", blank(justification) ? null : justification)));
+        return get(id);
+    }
+
+    /** Withdraw a submission (the submitter, or a sales administrator); the order can be edited again. */
+    @Transactional
+    public Map<String, Object> withdrawApproval(String id, String reason) {
+        Map<String, Object> o = lock(id);
+        if (!"draft".equals(o.get("status")) || !"pending".equals(o.get("approvalStatus"))) {
+            throw ApiException.badRequest("This sale is not waiting for approval");
+        }
+        if (!java.util.Objects.equals(user(), o.get("approvalSubmittedById"))
+                && !TenantContext.has(Permissions.SALES__CONFIGURE)) {
+            throw ApiException.forbidden("Only the person who submitted this sale for approval can withdraw it");
+        }
+        withdrawEngineRequest(o, blank(reason) ? "Withdrawn by the submitter" : reason);
+        List<String> reasons = approvalReasons(o, orderLines(id));
+        Map<String, Object> d = new LinkedHashMap<>();
+        d.put("approvalStatus", reasons.isEmpty() ? "not_required" : "required");
+        d.put("approvalReasons", reasons);
+        d.put("approvalRequestId", null);
+        d.put("version", ((Number) o.get("version")).intValue() + 1);
+        db.patch("SalesOrder", id, d, true);
+        audit.record(AuditInput.of("SalesOrder", id, "update", null, Obj.of("approval", "withdrawn", "reason", reason)));
+        return get(id);
+    }
+
+    /** The order's approvals-engine request, if still pending, is withdrawn (its inbox item resolves). */
+    private void withdrawEngineRequest(Map<String, Object> o, String reason) {
+        if ("pending".equals(o.get("approvalStatus")) && !blank(str(o.get("approvalRequestId")))) {
+            approvals.withdraw(str(o.get("approvalRequestId")), reason);
+        }
+    }
+
+    /**
+     * OD-8: an approver is not the order's creator, its submitter or the last person who changed its approvable
+     * content — unless the organization allows sales administrators to approve their own (audited). Null = allowed.
+     */
+    private String selfApprovalProblem(Map<String, Object> o) {
+        String me = user();
+        if (me == null || !(me.equals(o.get("createdById")) || me.equals(o.get("approvalSubmittedById"))
+                || me.equals(o.get("approvalContentEditedById")))) {
+            return null;
+        }
+        Map<String, Object> s = db.row("SELECT \"allowSelfApproval\" FROM \"SalesSettings\" WHERE \"organizationId\" = ?",
+                org());
+        if (s != null && Boolean.TRUE.equals(s.get("allowSelfApproval")) && TenantContext.has(Permissions.SALES__CONFIGURE)) {
+            return null;
+        }
+        return "You cannot approve your own order";
+    }
+
+    /** What followed an approval: the confirmed order, or why the confirm that followed was refused (both null: none). */
+    private record Approved(Map<String, Object> confirmed, String confirmError) {}
+
+    /**
+     * Record the approval (bound to the submitted content, reasons and rules); an order (never a cash sale) then
+     * confirms at once when the organization says so, with every confirm check — a refusal rolls back only the confirm
+     * (savepoint) and leaves the order approved.
+     */
+    private Approved markApproved(String id, Map<String, Object> o, String comment, String via) {
+        List<String> approved = new ArrayList<>(SalesDb.strings(o.get("approvalSubmittedReasons")));
+        // a new approval of the same content (after a stricter rule) keeps what was approved before it
+        if (o.get("approvedHash") != null && o.get("approvedHash").equals(o.get("approvalSubmittedHash"))) {
+            SalesDb.strings(o.get("approvedReasons")).stream().filter(r -> !approved.contains(r)).forEach(approved::add);
+        }
+        Map<String, Object> d = new LinkedHashMap<>();
+        d.put("approvalStatus", "approved");
+        d.put("approvedHash", o.get("approvalSubmittedHash"));
+        d.put("approvedReasons", approved);
+        d.put("approvedRuleVersion", o.get("approvalRuleVersion"));
+        d.put("approvedById", user());
+        d.put("approvedAt", Instant.now());
+        d.put("version", ((Number) o.get("version")).intValue() + 1);
+        db.patch("SalesOrder", id, d, true);
+        // OD-8: an approval by one of the order's makers (allowed by the organization) is marked in the audit trail
+        boolean self = user() != null && (user().equals(o.get("createdById")) || user().equals(o.get(
+                "approvalSubmittedById")) || user().equals(o.get("approvalContentEditedById")));
+        audit.record(AuditInput.of("SalesOrder", id, "approve", null, Obj.of("comment", comment, "via", via,
+                "selfApproval", self)));
+        if ("order".equals(o.get("saleType")) && !Boolean.FALSE.equals(settings.settings().get("confirmOnApproval"))) {
+            Map<String, Object>[] out = new Map[1];
+            try {
+                Savepoints.run(db.jdbc(), () -> out[0] = confirm(id));
+                return new Approved(out[0], null);
+            } catch (ApiException refused) {
+                return new Approved(null, refused.getMessage());
+            }
+        }
+        return new Approved(null, null);
     }
 
     private static String shortDescription(List<Map<String, Object>> lines, Map<String, Object> shortage) {
@@ -875,7 +1134,10 @@ public class SalesOrderService {
 
     /** Why this order needs commercial approval (empty = within policy). */
     List<String> approvalReasons(Map<String, Object> o, List<Map<String, Object>> lines) {
-        Map<String, Object> s = settings.settings();
+        return approvalReasons(o, lines, settings.settings());
+    }
+
+    private List<String> approvalReasons(Map<String, Object> o, List<Map<String, Object>> lines, Map<String, Object> s) {
         List<String> reasons = new ArrayList<>(engine.breaches(str(o.get("partnerId")), str(o.get("branchId")),
                 LocalDate.now(BusinessZone.get()), lines.stream().filter(l -> !Set.of("quotation", "agreement").contains(str(l.get(
                         "priceSource")))).toList(), dec(s.get("orderMaxDiscountPercent")), Boolean.TRUE.equals(s.get(
@@ -891,25 +1153,40 @@ public class SalesOrderService {
         return reasons;
     }
 
-    /** Approve a pending order (commercial approver, not the requester) and confirm it. */
+    /**
+     * Approve a submitted order (ADR-S094 §4.2; OD-8 separation of duties) — bound to the content submitted — and, for
+     * an order, confirm it when the organization says so.
+     */
     @Transactional
     public Map<String, Object> approve(String id, String comment) {
         Map<String, Object> o = lock(id);
-        if (!"pending_approval".equals(o.get("status"))) {
+        if (!"draft".equals(o.get("status")) || !"pending".equals(o.get("approvalStatus"))) {
             throw ApiException.badRequest("Order is not awaiting approval");
         }
-        if (user() != null && user().equals(o.get("createdById")) && !TenantContext.has(Permissions.SALES__CONFIGURE)) {
-            throw ApiException.forbidden("You cannot approve your own order");
+        String self = selfApprovalProblem(o);
+        if (self != null) {
+            throw ApiException.forbidden(self);
+        }
+        if (!SalesApprovalContent.hash(o, orderLines(id)).equals(o.get("approvalSubmittedHash"))) {
+            throw ApiException.badRequest("This sale changed after it was submitted for approval; withdraw it and submit"
+                    + " it again");
         }
         // Sales readiness SO-10: the order's approvals-engine request is decided through the engine (its steps,
         // limits and segregation of duties apply), so the inbox item resolves; a multi-step request that still waits
         // for another approver leaves the order pending.
         if (decideEngineRequest(o, "approved", comment)) {
-            audit.record(AuditInput.of("SalesOrder", id, "approve_step", null, Obj.of("comment", comment)));
+            audit.record(AuditInput.of("SalesOrder", id, "approve", null, Obj.of("comment", comment, "step", "partial")));
             return get(id);
         }
-        audit.record(AuditInput.of("SalesOrder", id, "approve", null, Obj.of("comment", comment)));
-        return finishConfirm(id);
+        Approved approved = markApproved(id, o, comment, "approver");
+        if (approved.confirmed() != null) {
+            return approved.confirmed();
+        }
+        Map<String, Object> out = get(id);
+        if (approved.confirmError() != null) {
+            out.put("confirmError", approved.confirmError());
+        }
+        return out;
     }
 
     /**
@@ -929,17 +1206,17 @@ public class SalesOrderService {
         return "approved".equals(status) && "pending".equalsIgnoreCase(String.valueOf(decided.get("status")));
     }
 
-    /** Reject a pending order: back to draft with the reason. */
+    /** Reject a submitted order: it stays a draft, {@code rejected}, with the reason. */
     @Transactional
     public Map<String, Object> reject(String id, String reason) {
         Map<String, Object> o = lock(id);
-        if (!"pending_approval".equals(o.get("status"))) {
+        if (!"draft".equals(o.get("status")) || !"pending".equals(o.get("approvalStatus"))) {
             throw ApiException.badRequest("Order is not awaiting approval");
         }
         decideEngineRequest(o, "rejected", blank(reason) ? "no reason given" : reason);
-        db.patch("SalesOrder", id, Obj.of("status", "draft", "approvalReasons", List.of("Rejected: " + (blank(reason)
-                ? "no reason given" : reason)), "approvalRequestId", null, "version", ((Number) o.get("version"))
-                .intValue() + 1), true);
+        db.patch("SalesOrder", id, Obj.of("approvalStatus", "rejected", "approvalReasons", List.of("Rejected: "
+                + (blank(reason) ? "no reason given" : reason)), "approvalRequestId", null, "version",
+                ((Number) o.get("version")).intValue() + 1), true);
         audit.record(AuditInput.of("SalesOrder", id, "reject", null, Obj.of("reason", reason)));
         return get(id);
     }
@@ -950,9 +1227,9 @@ public class SalesOrderService {
      */
     @Transactional
     public void applyDecision(String id, String requestId, boolean approved, String comment) {
-        Map<String, Object> o = db.row("SELECT status, \"approvalRequestId\" FROM \"SalesOrder\" WHERE id = ? AND"
-                + " \"organizationId\" = ? FOR UPDATE", id, org());
-        if (o == null || !"pending_approval".equals(o.get("status"))) {
+        Map<String, Object> o = db.row("SELECT * FROM \"SalesOrder\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE",
+                id, org());
+        if (o == null || !"draft".equals(o.get("status")) || !"pending".equals(o.get("approvalStatus"))) {
             return;
         }
         // A decision on a superseded request (the order was rejected and resubmitted since) must not decide the new one.
@@ -960,21 +1237,34 @@ public class SalesOrderService {
             return;
         }
         if (approved) {
-            finishConfirm(id);
-        } else {
-            db.patch("SalesOrder", id, Obj.of("status", "draft", "approvalReasons", List.of("Rejected: " + (blank(comment)
-                    ? "rejected in approval workflow" : comment)), "approvalRequestId", null), true);
+            // OD-8 / §4.2: an engine approval by one of the order's makers (separation of duties), or of content that
+            // is no longer the content submitted, does not approve the sale: it has to be submitted again.
+            String self = selfApprovalProblem(o);
+            boolean changed = !SalesApprovalContent.hash(o, orderLines(id)).equals(o.get("approvalSubmittedHash"));
+            if (self != null || changed) {
+                db.patch("SalesOrder", id, Obj.of("approvalStatus", "required", "approvalRequestId", null), true);
+                audit.record(AuditInput.of("SalesOrder", id, "update", null, Obj.of("approval", "refused", "via", "approval_engine",
+                        "reason", self != null ? self : "content changed after it was submitted")));
+                return;
+            }
+            Approved done = markApproved(id, o, comment, "approval_engine");
+            if (done.confirmError() != null) {
+                // nobody waits for this response: the refusal of the confirm that followed is kept in the audit trail
+                audit.record(AuditInput.of("SalesOrder", id, "update", null, Obj.of("approval", "approved",
+                        "confirmError", done.confirmError())));
+            }
+            return;
         }
-        audit.record(AuditInput.of("SalesOrder", id, approved ? "approve" : "reject", null, Obj.of("via",
-                "approval_engine")));
+        db.patch("SalesOrder", id, Obj.of("approvalStatus", "rejected", "approvalReasons", List.of("Rejected: "
+                + (blank(comment) ? "rejected in approval workflow" : comment)), "approvalRequestId", null), true);
+        audit.record(AuditInput.of("SalesOrder", id, "reject", null, Obj.of("via", "approval_engine")));
     }
 
     private Map<String, Object> finishConfirm(String id) {
         Map<String, Object> o = db.row("SELECT * FROM \"SalesOrder\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE",
                 id, org());
-        // Sales readiness R3 (P1-1): only a live draft (from confirm) or an order whose commercial approval was just
-        // given (pending_approval) can be confirmed here; every other path must go through confirm() first.
-        if (o == null || o.get("deletedAt") != null || !Set.of("draft", "pending_approval").contains(o.get("status"))) {
+        // Sales readiness R3 (P1-1) / ADR-S094: only a live draft whose approval condition confirm() checked.
+        if (o == null || o.get("deletedAt") != null || !"draft".equals(o.get("status"))) {
             throw ApiException.badRequest("Only draft orders can be confirmed");
         }
         Map<String, Object> policy0 = settings.settings();
@@ -1002,6 +1292,10 @@ public class SalesOrderService {
         boolean hold = !c.passed() && !covered;
         Map<String, Object> d = Obj.of("status", "confirmed", "confirmedAt", Instant.now(), "confirmedById", user(),
                 "approvalReasons", List.of(), "version", ((Number) o.get("version")).intValue() + 1);
+        if (!Set.of("not_required", "approved").contains(o.get("approvalStatus"))) {
+            // confirm() found no reason for approval (a stale "required" from before a rule was relaxed)
+            d.put("approvalStatus", "not_required");
+        }
         if (hold) {
             d.put("onHold", true);
             d.put("holdReason", reason);
@@ -1127,9 +1421,15 @@ public class SalesOrderService {
                 + " status = 'pending_approval'", List.of(org(), id)) > 0) {
             throw ApiException.badRequest("Decide the pending change requests of this order first");
         }
-        db.patch("SalesOrder", id, Obj.of("status", "cancelled", "cancelledAt", Instant.now(), "cancelledById", user(),
-                "cancelReason", blank(reason) ? null : reason, "onHold", false, "version",
-                ((Number) o.get("version")).intValue() + 1), true);
+        withdrawEngineRequest(o, "Order cancelled");
+        Map<String, Object> cancelled = Obj.of("status", "cancelled", "cancelledAt", Instant.now(), "cancelledById",
+                user(), "cancelReason", blank(reason) ? null : reason, "onHold", false, "version",
+                ((Number) o.get("version")).intValue() + 1);
+        if ("pending".equals(o.get("approvalStatus"))) {
+            cancelled.put("approvalStatus", "required");
+            cancelled.put("approvalRequestId", null);
+        }
+        db.patch("SalesOrder", id, cancelled, true);
         audit.record(AuditInput.of("SalesOrder", id, "cancel", null, Obj.of("reason", reason)));
         closeCreditRequests(id, "Order cancelled");
         atp.releaseOrder(id);
@@ -1186,8 +1486,8 @@ public class SalesOrderService {
     }
 
     /**
-     * Derive delivery / invoice status and move {@code confirmed → in_fulfilment → done} from the line quantities
-     * (called whenever a projection changes).
+     * Derive delivery / invoice status and move {@code confirmed → done} from the line quantities (called whenever a
+     * projection changes). ADR-S094 §4.1: progress lives in deliveryStatus / invoiceStatus, not in the status.
      */
     @Transactional
     public void refreshStatus(String id) {
@@ -1212,8 +1512,7 @@ public class SalesOrderService {
                 : invoiced.compareTo(billable) >= 0 && allDelivered ? "invoiced" : "partial";
         // SO-7: an order closed short on every line before anything left has nothing to deliver or bill: it is done.
         boolean nothingLeft = dec(s.get("open")).signum() == 0 && invoiced.signum() == 0 && billable.signum() == 0;
-        String status = allDelivered && ("invoiced".equals(invoice) || nothingLeft) ? "done"
-                : delivered.signum() > 0 || invoiced.signum() > 0 ? "in_fulfilment" : str(o.get("status"));
+        String status = allDelivered && ("invoiced".equals(invoice) || nothingLeft) ? "done" : str(o.get("status"));
         Map<String, Object> d = Obj.of("deliveryStatus", delivery, "invoiceStatus", invoice, "status", status);
         if ("done".equals(status)) {
             d.put("doneAt", Instant.now());

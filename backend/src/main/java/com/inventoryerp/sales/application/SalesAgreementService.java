@@ -37,7 +37,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class SalesAgreementService {
 
-    static final Set<String> RELEASED = Set.of("confirmed", "in_fulfilment", "done");
+    static final Set<String> RELEASED = Set.of("confirmed", "done");
 
     private final SalesDb db;
     private final SequenceService sequence;
@@ -125,7 +125,7 @@ public class SalesAgreementService {
         for (Map<String, Object> r : db.rows("SELECT al.id, sum((l.quantity - l.\"qtyCancelled\") * l.\"uomFactor\")"
                 + " AS qty FROM \"SalesAgreementLine\" al JOIN \"SalesOrder\" o ON o.\"agreementId\" = al.\"agreementId\""
                 + " JOIN \"SalesOrderLine\" l ON l.\"orderId\" = o.id AND " + RELEASE_MATCH + " WHERE al.\"agreementId\" = ?"
-                + " AND o.\"organizationId\" = ? AND o.\"deletedAt\" IS NULL AND o.status IN ('confirmed', 'in_fulfilment',"
+                + " AND o.\"organizationId\" = ? AND o.\"deletedAt\" IS NULL AND o.status IN ('confirmed',"
                 + " 'done') GROUP BY al.id", agreementId, org())) {
             out.put(str(r.get("id")), dec(r.get("qty")));
         }
@@ -308,7 +308,7 @@ public class SalesAgreementService {
     public Map<String, Object> cancel(String id) {
         Map<String, Object> a = lock(id);
         if (db.count("SELECT count(*) FROM \"SalesOrder\" WHERE \"agreementId\" = ? AND \"organizationId\" = ? AND"
-                + " \"deletedAt\" IS NULL AND status IN ('confirmed', 'in_fulfilment', 'done')", List.of(id, org())) > 0) {
+                + " \"deletedAt\" IS NULL AND status IN ('confirmed', 'done')", List.of(id, org())) > 0) {
             throw ApiException.badRequest("Agreement has confirmed releases; close it instead");
         }
         return transition(str(a.get("id")), Set.of("draft", "active"), "cancelled",

@@ -127,8 +127,11 @@ class SalesOrderPolicyIT extends ApiTestSupport {
         assertThat(alerts).isEqualTo(2);
 
         ok(200, "PUT", "/sales/settings", Map.of("orderApprovalAlways", true));
-        JsonNode pending = ok(200, "POST", "/sales/orders/" + id(draft(1)) + "/confirm", null);
-        assertThat(pending.get("status").asString()).isEqualTo("pending_approval");
+        String always = id(draft(1));
+        assertThat(as("POST", "/sales/orders/" + always + "/confirm", null).body().get("message").asString())
+                .isEqualTo("This sale needs approval: submit it for approval first");
+        JsonNode pending = ok(200, "POST", "/sales/orders/" + always + "/submit-approval", null);
+        assertThat(pending.get("approvalStatus").asString()).isEqualTo("pending");
     }
 
     @Test

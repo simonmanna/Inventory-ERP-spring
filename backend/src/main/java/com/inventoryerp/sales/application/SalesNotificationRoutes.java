@@ -45,7 +45,7 @@ public class SalesNotificationRoutes implements RoutedEventSource {
     @Override
     public List<RoutedEvent> routedEvents() {
         return List.of(
-                order("sales.order.confirmed", "Sales order confirmed", "'confirmed', 'in_fulfilment', 'done'")
+                order("sales.order.confirmed", "Sales order confirmed", "'confirmed', 'done'")
                         .defaults("owner", Party.CREATOR)
                         .title("Sales order {number} confirmed")
                         .build(),

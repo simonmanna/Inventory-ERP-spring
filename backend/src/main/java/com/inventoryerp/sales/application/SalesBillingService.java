@@ -283,7 +283,7 @@ public class SalesBillingService {
         List<String> ids = new ArrayList<>(SalesDb.strings(in.get("orderIds")));
         if (ids.isEmpty() && !blank(str(in.get("partnerId")))) {
             for (Map<String, Object> r : db.rows("SELECT id FROM \"SalesOrder\" WHERE \"organizationId\" = ? AND"
-                    + " \"partnerId\" = ? AND status IN ('confirmed', 'in_fulfilment', 'done') AND \"deletedAt\" IS NULL ORDER"
+                    + " \"partnerId\" = ? AND status IN ('confirmed', 'done') AND \"deletedAt\" IS NULL ORDER"
                     + " BY \"confirmedAt\"", org(), str(in.get("partnerId")))) {
                 ids.add(str(r.get("id")));
             }
@@ -708,7 +708,7 @@ public class SalesBillingService {
                   FROM "SalesOrderLine" l JOIN "SalesOrder" o ON o.id = l."orderId"
                   LEFT JOIN "Product" p ON p.id = l."productId"
                  WHERE o."organizationId" = ? AND o."deletedAt" IS NULL
-                   AND o.status IN ('confirmed', 'in_fulfilment', 'done')""", org());
+                   AND o.status IN ('confirmed', 'done')""", org());
         java.util.Set<Object> orders = new java.util.HashSet<>();
         for (Map<String, Object> l : lines) {
             orders.add(l.get("orderId"));

@@ -45,7 +45,7 @@ export function FulfilmentPanel({ order }: { order: SalesOrder }) {
     onError: (e) => toast.error(apiErrorMessage(e, tx('Could not update'))),
   });
   if (!data) return null;
-  const open = ['confirmed', 'in_fulfilment'].includes(order.status);
+  const open = order.status === 'confirmed';
   const live = data.deliveries.some((d) => d.status !== 'cancelled' && d.status !== 'closed');
   return (
     <div data-tour="sales.order.fulfilment" className="rounded-xl border bg-card p-4 text-sm shadow-sm">

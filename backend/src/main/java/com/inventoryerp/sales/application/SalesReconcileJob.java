@@ -31,8 +31,8 @@ public class SalesReconcileJob {
     @Scheduled(cron = "0 10 3 * * *")
     @SchedulerLock(name = "sales-fulfilment-reconcile", lockAtMostFor = "PT1H")
     public void tick() {
-        List<String> orgs = jdbc.sql("SELECT DISTINCT \"organizationId\" FROM \"SalesOrder\" WHERE status IN ('confirmed',"
-                + " 'in_fulfilment')").query(String.class).list();
+        List<String> orgs = jdbc.sql("SELECT DISTINCT \"organizationId\" FROM \"SalesOrder\" WHERE status IN ('confirmed'"
+                + ")").query(String.class).list();
         for (String orgId : orgs) {
             try {
                 Map<String, Object> r = TenantContext.run(TenantContext.TenantStore.organization(orgId),

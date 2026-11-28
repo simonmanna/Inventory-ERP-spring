@@ -20,7 +20,7 @@ export function DeliveryActionDialogs({ order, lines, plan, action, onAction, on
 }) {
   if (!action) return null;
   const d = action.delivery;
-  const orderOpen = ['confirmed', 'in_fulfilment'].includes(order.status) && !order.onHold;
+  const orderOpen = order.status === 'confirmed' && !order.onHold;
   switch (action.key) {
     case 'view':
       return <DeliveryDetailDialog id={d!.id} orderOpen={orderOpen} currency={order.currencyCode} onClose={onClose} onAction={(k, x) => onAction(k, x)} />;

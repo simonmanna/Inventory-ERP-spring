@@ -149,7 +149,8 @@ class SalesFulfilmentIT extends ApiTestSupport {
         assertThat(q.get("qtyBillable").asDouble()).isZero();
         assertThat(reserved()).isEqualByComparingTo("20");
         JsonNode o = ok(200, "GET", "/sales/orders/" + so, null);
-        assertThat(o.get("status").asString()).isEqualTo("in_fulfilment");
+        assertThat(o.get("status").asString()).isEqualTo("confirmed");
+        assertThat(o.get("stage").asString()).isEqualTo("in_fulfilment");
         assertThat(o.get("deliveryStatus").asString()).isEqualTo("partial");
 
         JsonNode delivered = money("/fleet/trips/" + t1 + "/proof-of-delivery", pod(d1, 29.5, "spillage"));

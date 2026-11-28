@@ -99,7 +99,7 @@ public class SalesAnalyticsService {
                 + " \"SalesQuotation\" WHERE \"organizationId\" = ? AND status IN ('approved', 'sent') AND \"deletedAt\""
                 + " IS NULL", org());
         Map<String, Object> toDeliver = db.row("SELECT count(*) AS count, COALESCE(sum(total), 0) AS total FROM"
-                + " \"SalesOrder\" WHERE \"organizationId\" = ? AND status IN ('confirmed', 'in_fulfilment') AND"
+                + " \"SalesOrder\" WHERE \"organizationId\" = ? AND status IN ('confirmed') AND"
                 + " \"deliveryStatus\" <> 'full' AND \"deletedAt\" IS NULL", org());
         Map<String, Object> toInvoice = db.row("SELECT count(*) AS count FROM \"SalesOrder\" WHERE \"organizationId\" = ?"
                 + " AND \"invoiceStatus\" IN ('to_invoice', 'partial') AND status <> 'cancelled' AND \"deletedAt\" IS"
@@ -288,7 +288,7 @@ public class SalesAnalyticsService {
                        sum((l.quantity - l."qtyCancelled" - (l."qtyInvoiced" - l."qtyCredited")) * l."unitPrice"
                            * (1 - l."discountPercent" / 100)) AS open
                   FROM "SalesOrder" o JOIN "SalesOrderLine" l ON l."orderId" = o.id
-                 WHERE o."organizationId" = ? AND o.status IN ('confirmed', 'in_fulfilment') AND o."deletedAt" IS NULL
+                 WHERE o."organizationId" = ? AND o.status IN ('confirmed') AND o."deletedAt" IS NULL
                  GROUP BY 1""", org())) {
             add(f, buckets, (LocalDate) o.get("due"), 0, dec(o.get("open")).max(BigDecimal.ZERO));
         }
@@ -345,7 +345,7 @@ public class SalesAnalyticsService {
                   LEFT JOIN LATERAL (SELECT sum((l.quantity - l."qtyCancelled") * l."uomFactor") AS qty
                                FROM "SalesOrderLine" l JOIN "SalesOrder" o ON o.id = l."orderId"
                               WHERE o."agreementId" = ? AND o."deletedAt" IS NULL
-                                AND o.status IN ('confirmed', 'in_fulfilment', 'done') AND\s"""
+                                AND o.status IN ('confirmed', 'done') AND\s"""
                 + SalesAgreementService.RELEASE_MATCH + """
                             ) rel ON true
                  WHERE al."agreementId" = ?""", agreementId, agreementId);

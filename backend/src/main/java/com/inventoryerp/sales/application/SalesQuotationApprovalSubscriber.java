@@ -1,6 +1,7 @@
 package com.inventoryerp.sales.application;
 
 import com.inventoryerp.kernel.events.EventBus;
+import com.inventoryerp.kernel.security.PermissionService;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.kernel.tenancy.TenantContext.TenantStore;
 import jakarta.annotation.PostConstruct;
@@ -25,10 +26,12 @@ public class SalesQuotationApprovalSubscriber {
     private final JdbcClient jdbc;
     private final SalesQuotationService quotations;
     private final SalesOrderService orders;
+    private final PermissionService permissions;
 
     public SalesQuotationApprovalSubscriber(EventBus events, JdbcClient jdbc, SalesQuotationService quotations,
-            SalesOrderService orders) {
+            SalesOrderService orders, PermissionService permissions) {
         this.orders = orders;
+        this.permissions = permissions;
         this.events = events;
         this.jdbc = jdbc;
         this.quotations = quotations;
@@ -59,6 +62,8 @@ public class SalesQuotationApprovalSubscriber {
                 + " \"decidedAt\" DESC LIMIT 1").param(requestId).query(String.class).optional().orElse(null);
         TenantContext.run(TenantStore.user(orgId, decider), () -> {
             if (order) {
+                // ADR-S094: the order follows the decider's own permissions (order visibility, OD-8 self-approval)
+                permissions.current();
                 orders.applyDecision(quotationId, requestId, approved, comment);
             } else {
                 quotations.applyDecision(quotationId, requestId, approved, comment);

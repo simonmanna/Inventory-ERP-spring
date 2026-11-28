@@ -305,9 +305,9 @@ public class SalesReportingService {
                 + " \"amountResidual\" > 0" + arScope, arParams.toArray());
         Map<String, Object> orders = db.row("SELECT count(*) FILTER (WHERE COALESCE(\"confirmedAt\", \"createdAt\") >= ?"
                 + " AND COALESCE(\"confirmedAt\", \"createdAt\") < ? AND status <> 'cancelled') AS period,"
-                + " count(*) FILTER (WHERE status IN ('draft', 'pending_approval')) AS pending,"
-                + " count(*) FILTER (WHERE status IN ('confirmed', 'in_fulfilment') AND \"deliveryStatus\" <> 'full')"
-                + " AS \"toDeliver\", COALESCE(sum(total) FILTER (WHERE status IN ('confirmed', 'in_fulfilment') AND"
+                + " count(*) FILTER (WHERE status = 'draft') AS pending,"
+                + " count(*) FILTER (WHERE status IN ('confirmed') AND \"deliveryStatus\" <> 'full')"
+                + " AS \"toDeliver\", COALESCE(sum(total) FILTER (WHERE status IN ('confirmed') AND"
                 + " \"deliveryStatus\" <> 'full'), 0) AS \"toDeliverValue\" FROM \"SalesOrder\" WHERE \"organizationId\" = ?"
                 + " AND \"deletedAt\" IS NULL" + orderScope, orderParams.toArray());
         Map<String, Object> quotes = db.row("SELECT count(*) AS count, COALESCE(sum(subtotal), 0) AS value FROM"

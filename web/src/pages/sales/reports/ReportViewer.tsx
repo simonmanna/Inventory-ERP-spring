@@ -26,7 +26,7 @@ import { PERIODS, periodRange, requestParams } from './report-period';
 // ------------------------------------------------------------------ filters
 
 const STATUS_OPTIONS: Record<string, string[]> = {
-  order: ['draft', 'pending_approval', 'confirmed', 'in_fulfilment', 'done', 'cancelled'],
+  order: ['draft', 'confirmed', 'done', 'cancelled'],
   quotation: ['draft', 'pending_approval', 'approved', 'sent', 'accepted', 'rejected', 'expired', 'cancelled', 'converted'],
   invoice: ['not_paid', 'partial', 'paid', 'overpaid'],
   customer: ['active', 'at_risk', 'inactive', 'never'],

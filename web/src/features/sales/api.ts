@@ -4,7 +4,14 @@ import { api } from '@/lib/api';
 
 // ---- Types (Sales / order-to-cash, ADR-S011) ----
 
-export type SalesOrderStatus = 'draft' | 'pending_approval' | 'confirmed' | 'in_fulfilment' | 'done' | 'cancelled';
+/** ADR-S094 §4.1: the commercial status. Approval, delivery and invoicing are separate dimensions. */
+export type SalesOrderStatus = 'draft' | 'confirmed' | 'done' | 'cancelled';
+/** The legacy combined value (pending_approval / in_fulfilment), derived by the API for one release (ADR-S094 §4.6). */
+export type SalesOrderStage = 'draft' | 'pending_approval' | 'confirmed' | 'in_fulfilment' | 'done' | 'cancelled';
+/** ADR-S094 §4.2: approval of a draft sale, bound to its content. */
+export type SalesApprovalStatus = 'not_required' | 'required' | 'pending' | 'approved' | 'rejected';
+/** Approval and confirm steps the signed-in user may take on a draft. */
+export type SalesOrderAction = 'submit_approval' | 'withdraw_approval' | 'approve' | 'reject' | 'confirm';
 export type DeliveryStatus = 'none' | 'partial' | 'full';
 export type InvoiceStatus = 'nothing' | 'to_invoice' | 'partial' | 'invoiced';
 export type ChangeRequestStatus = 'draft' | 'pending_approval' | 'applied' | 'rejected';
@@ -60,6 +67,16 @@ export interface SalesOrder {
   /** Optimistic-lock counter: sent back on save so a stale copy cannot overwrite a newer edit (SO-11). */
   version?: number;
   status: SalesOrderStatus;
+  stage?: SalesOrderStage;
+  saleType?: 'order' | 'cash';
+  approvalStatus?: SalesApprovalStatus;
+  approvalJustification?: string | null;
+  approvalSubmittedAt?: string | null;
+  approvedAt?: string | null;
+  /** Steps the signed-in user may take now (drafts only). */
+  actions?: SalesOrderAction[];
+  /** An approval whose automatic confirm was refused: the order stays an approved draft. */
+  confirmError?: string;
   onHold: boolean;
   holdReason: string | null;
   holdKind: 'manual' | 'credit' | 'customer' | null;
@@ -138,7 +155,7 @@ export const salesApi = {
   createOrder: async (body: Record<string, unknown>) => (await api.post<SalesOrder>('/sales/orders', body)).data,
   updateOrder: async ({ id, ...body }: { id: string } & Record<string, unknown>) => (await api.put<SalesOrder>(`/sales/orders/${id}`, body)).data,
   deleteOrder: async (id: string) => (await api.delete(`/sales/orders/${id}`)).data,
-  orderAction: async ({ id, action, body }: { id: string; action: 'confirm' | 'hold' | 'release' | 'cancel' | 'duplicate' | 'approve' | 'reject'; body?: Record<string, unknown> }) =>
+  orderAction: async ({ id, action, body }: { id: string; action: 'confirm' | 'hold' | 'release' | 'cancel' | 'duplicate' | 'approve' | 'reject' | 'submit-approval' | 'withdraw-approval'; body?: Record<string, unknown> }) =>
     idempotentPost<SalesOrder>(`/sales/orders/${id}/${action}`, body ?? {}),
   closeShort: async ({ id, lineId, reason }: { id: string; lineId: string; reason: string }) =>
     (await api.post<SalesOrder>(`/sales/orders/${id}/lines/${lineId}/close-short`, { reason })).data,

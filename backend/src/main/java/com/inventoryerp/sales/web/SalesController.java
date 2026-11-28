@@ -275,6 +275,22 @@ public final class SalesController {
             return svc.confirm(id);
         }
 
+        /** ADR-S094 §4.2: send a draft that needs approval to its approvers (explicit; never done by confirm). */
+        @PostMapping("/{id}/submit-approval")
+        @RequirePermissions(Permissions.SALES__ORDER_WRITE)
+        public Map<String, Object> submitApproval(@PathVariable String id,
+                @RequestBody(required = false) Map<String, Object> b) {
+            return svc.submitApproval(id, text(b, "justification"));
+        }
+
+        /** ADR-S094 §4.2: take a submission back (the submitter); the draft can be edited again. */
+        @PostMapping("/{id}/withdraw-approval")
+        @RequirePermissions(Permissions.SALES__ORDER_WRITE)
+        public Map<String, Object> withdrawApproval(@PathVariable String id,
+                @RequestBody(required = false) Map<String, Object> b) {
+            return svc.withdrawApproval(id, text(b, "reason"));
+        }
+
         @PostMapping("/{id}/approve")
         @Idempotent(required = true)
         @RequirePermissions(Permissions.SALES__ORDER_APPROVE)

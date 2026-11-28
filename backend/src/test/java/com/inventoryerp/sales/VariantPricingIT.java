@@ -204,8 +204,8 @@ class VariantPricingIT extends ApiTestSupport {
                 .as("Blue does not draw on Red's balance").doesNotContain("agreement balance");
         String over = ok(201, "POST", "/sales/orders", Map.of("partnerId", customer, "agreementId", id, "lines",
                 List.of(Map.of("productId", p, "variantId", v.get("Red"), "quantity", 75)))).get("id").asString();
-        JsonNode pending = ok(200, "POST", "/sales/orders/" + over + "/confirm", null);
-        assertThat(pending.get("status").asString()).isEqualTo("pending_approval");
+        JsonNode pending = ok(200, "POST", "/sales/orders/" + over + "/submit-approval", null);
+        assertThat(pending.get("approvalStatus").asString()).isEqualTo("pending");
         assertThat(pending.get("approvalReasons").toString()).contains("exceeds the agreement balance of 70");
     }
 }

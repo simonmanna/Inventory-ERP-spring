@@ -21,6 +21,8 @@ const GROUPS: Array<[string, Array<[string, string, Kind]>]> = [
     ['allowAlternativeWarehouse', 'Allow picking another warehouse', 'bool'],
     ['orderApprovalAlways', 'Every order needs approval', 'bool'],
     ['orderApprovalAmount', 'Approval above this amount (0 = off)', 'num'],
+    ['confirmOnApproval', 'Confirm an order as soon as it is approved', 'bool'],
+    ['allowSelfApproval', 'Sales administrators may approve their own orders', 'bool'],
     ['orderMaxDiscountPercent', 'Approval above this discount %', 'num'],
     ['marginCheck', 'Check margin floors', 'bool'],
     ['notifyOnHold', 'Alert the owner when an order is held', 'bool'],

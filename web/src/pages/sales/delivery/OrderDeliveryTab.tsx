@@ -92,7 +92,7 @@ export function OrderDeliveryTab({ order, requestedDate, onRequestedDate, dateEd
     await api.patch(`/sales/orders/${order.id}/handover`, body);
   }, tx('Delivery details saved'));
 
-  const orderOpen = ['confirmed', 'in_fulfilment'].includes(order.status) && !order.onHold;
+  const orderOpen = order.status === 'confirmed' && !order.onHold;
   const canPlan = orderOpen && has(P.deliveryWrite);
   const [action, setAction] = useState<{ key: DeliveryActionKey | 'add' | 'view'; delivery?: SalesDelivery; initialQty?: Record<string, number> } | null>(null);
   const run = async (key: DeliveryActionKey | 'view', d: SalesDelivery) => {

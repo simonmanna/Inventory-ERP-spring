@@ -421,6 +421,32 @@ APPROVAL — independent of commercial status (the sale stays draft throughout)
 **Self-approval**: today a `sales:configure` holder may approve their own order (`SalesOrderService:901`). Revision 3
 proposes no self-approval at all, with an org setting to allow it for `sales:configure` holders, audited (OD-8).
 
+**As built (C1, V732; OD-7 and OD-8 approved 2026-11-28)**:
+- Routes: `POST /sales/orders/{id}/submit-approval` (`sales:order:write`, optional `justification`) and
+  `POST /sales/orders/{id}/withdraw-approval` (`sales:order:write`; the submitter, or a `sales:configure` holder);
+  `approve` (Idempotency-Key required, `sales:order:approve`) and `reject` keep their paths.
+- The order detail carries `approvalStatus` as it stands now (for a draft it is recomputed with the current rules, so a
+  stricter rule shows at once), the derived `stage`, and `actions`: the steps the caller may take now
+  (`submit_approval`, `withdraw_approval`, `approve`, `reject`, `confirm`). The web shows only those buttons.
+- Content hash (`SalesApprovalContent`, SHA-256): customer, payment mode and terms, pricelist, currency and entered
+  rate, agreement, order discount; per line the product, variant, quantity, unit and factor, price, discounts, tax and
+  tax-inclusive flag. Line order and line ids do not count. Notes, contacts, dates and delivery details are not
+  approvable content. Edits of approvable content are refused while pending; notes can still be edited.
+- Reasons are compared by their text. A reason whose text changes (for example a smaller agreement balance) needs
+  approval again. A lapsed approval does not come back when the content is restored: the sale is submitted again.
+- `SalesSettings.allowSelfApproval` (default off): when on, a `sales:configure` holder may approve an order they
+  created, submitted or last edited, and the `approve` audit row records `selfApproval: true`. An inbox decision by one
+  of the order's makers is not applied: the sale goes back to `required` (audit `approval: refused`).
+- `SalesSettings.confirmOnApproval` (default on): an order, never a cash sale, confirms right after its approval with
+  every confirm check, inside a savepoint. A refusal leaves the order approved; the approve response returns it as
+  `confirmError` (inbox decisions keep it in the audit trail).
+- Approvals inbox: the subscriber now loads the decider's permissions, so order visibility (`sales:order:read_all`) and
+  the self-approval setting apply to inbox decisions. Before, a decider who did not own the order could not apply the
+  decision (the confirm path re-read the order through the visibility filter and failed).
+- Offline sync: when a device asks to confirm an order that needs approval, the order is submitted for approval on the
+  rep's behalf, and the device outcome stays `pending_approval`.
+- Fixed in passing: `approve_step` was not a valid audit action, so a multi-step approval answered 500.
+
 ### 4.3 Commercial transitions
 
 ```
@@ -534,6 +560,15 @@ Per sale line, in base units:
   `SalesDeliveryService`, `SalesFulfilmentService`, `SalesCreditContributor`, the report and analytics services,
   `PlmReportService`, …), plus 13 web files and 2 test files.
 - **Responses**: carry a derived `stage` with the legacy value for one release, for cached clients.
+- **As built (C1, V732)**:
+  - The migration backfills with a proof: counts per old status must equal the new combinations, or it raises. A draft
+    whose last approval was rejected becomes `rejected`; a confirmed, done or cancelled order with an approved
+    approval request becomes `approved`.
+  - Database checks: the status and approval values; I1 (`confirmed` or `done` ⇒ `not_required` or `approved`); a cash
+    sale has `paymentMode = cash` (the branch and profile part of I7 follows in C3).
+  - `refreshStatus` no longer sets `in_fulfilment`. List filters `status=pending_approval` / `in_fulfilment` match
+    through the derived stage, and so does the report-center order filter. The list also filters on `approvalStatus`.
+  - TA-6: `SALES-QUARANTINE` is created for every organization that sends rejected goods there by default.
 
 ---
 
@@ -1342,7 +1377,7 @@ redesign.
 | **C0** Docs + assessment (approved to proceed) | ADR rev 3 in `docs/adr`; spec updates (`sales.md`, `cash-sales.md` superseded, `invoicing.md`, `sales-postings.md` with J1–J4, F1–F7, §3.6 and the sign-off table). Read-only on a **restored copy**: preflight, D-VAT-1 assessment, count of invoices posted before the guard (§10.4), credit-note creator classification (§7.3). WAL / PITR status of the live host checked read-only. **Assessment done 2026-11-28**: [report](../audits/2026-11-28-adr-s094-c0-assessment.md). | Owner approves the ADR · §8 matrix approved · AD and OD answered or gated · reports with zero unexplained items |
 | **C1a** Idempotency lease and fencing (kernel) + TA-6 fix | §6; quarantine location created when the setting is saved and named `RETRY_SAFE_TX` | IL-1…IL-10 green (IL-1 / IL-2 shown failing before the change) · TP-6 · all existing idempotency ITs and parity scenarios unchanged · `CONTRACT.md` §6 updated for the approved deviation only (OD-14) |
 | **C1b** D-VAT-1 correction | §3.5, after AD-14 / 15 / 17 (built, V731) | VAT-J1…J4 green in both modes · V1–V5 hold · historical assessment signed off (AD-18) |
-| **C1** Schema + state dimensions + approval | §4, including the submit button in the web; order behaviour preserved except the approved approval changes | Backfill proof (counts per old status = new combinations) · AP-1…AP-10 · I1–I7 · authorization matrix · tenant isolation · every existing SalesOrder IT green |
+| **C1** Schema + state dimensions + approval (built, V732) | §4, including the submit button in the web; order behaviour preserved except the approved approval changes | Backfill proof (counts per old status = new combinations) · AP-1…AP-10 · I1–I7 · authorization matrix · tenant isolation · every existing SalesOrder IT green |
 | **C2** Returns / credits / outcome / completion (after AD-9, AD-15, AD-20) | §7, §4.4, §4.5 | RT, CS and FO groups · `qtyCredited` for every credit path · `SalesReturnFlowIT` green |
 | **C3** Cash pickup | §5: payment model, T1, handover, fiscal outbox | Exact F1 journals · PM, PH, FI, TP, RC, FR, CC, RV groups green · R1–R3 = 0 · 20-line confirm p95 < 1.5 s and CC-5 without timeout on the rehearsal DB |
 | **C4** Invoice from sale + typed source contract | §8 | IS group · `sourceKind` backfilled on every existing customer document before the constraint is added and validated · parity scenarios unchanged · recurring unchanged |
